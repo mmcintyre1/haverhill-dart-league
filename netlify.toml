@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[functions]
+  # Allow longer execution for the scrape function
+  node_bundler = "esbuild"
+
+[functions."scheduled-scrape"]
+  external_node_modules = ["@neondatabase/serverless"]

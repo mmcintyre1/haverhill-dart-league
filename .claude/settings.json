@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:public-api.dartconnect.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.dartconnect.com)",
+      "WebFetch(domain:league.dartconnect.com)",
+      "WebFetch(domain:tv.dartconnect.com)",
+      "Read(//c//**)",
+      "Bash(echo:*)",
+      "Bash(npx create-next-app:*)",
+      "Bash(npx tsc:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(npm run db:push:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\mfmci",
+      "c:\\Users\\mfmci\\OneDrive\\Desktop\\projects\\haverhill-dart-league\\app\\players"
+    ]
+  }
+}
