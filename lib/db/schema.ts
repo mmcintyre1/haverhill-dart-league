@@ -47,6 +47,10 @@ export const teams = pgTable(
     divisionId: integer("division_id").references(() => divisions.id),
     name: text("name").notNull(),
     captainName: text("captain_name"),
+    // DartConnect-authoritative standings (from fetchStandingsPageProps competitors)
+    dcWins: integer("dc_wins"),
+    dcLosses: integer("dc_losses"),
+    dcLeaguePoints: integer("dc_league_points"),
   }
 );
 
@@ -156,6 +160,7 @@ export const playerWeekStats = pgTable(
     ro9: integer("ro9").notNull().default(0),
     hOut: integer("h_out").notNull().default(0),
     ldg: integer("ldg").notNull().default(0),
+    rnds: integer("rnds").notNull().default(0),
     mpr: numeric("mpr", { precision: 5, scale: 2 }),
     ppr: numeric("ppr", { precision: 6, scale: 2 }),
   },
@@ -163,6 +168,16 @@ export const playerWeekStats = pgTable(
     uniqueIndex("player_week_stats_idx").on(t.seasonId, t.playerId, t.weekKey),
   ]
 );
+
+// ─── News Posts ───────────────────────────────────────────────────────────────
+
+export const newsPosts = pgTable("news_posts", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  author: text("author"),
+  publishedAt: timestamp("published_at").notNull().defaultNow(),
+});
 
 // ─── Scrape Log ───────────────────────────────────────────────────────────────
 

@@ -135,52 +135,27 @@ export default async function PlayerPage({
         </div>
 
         {stat && (
-          <>
-            {/* Stat cards — record stats */}
-            <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {(
-                [
-                  { label: "PTS",  value: stat.setWins != null ? String(stat.setWins) : null },
-                  { label: "CRKT", value: stat.crkt },
-                  { label: "601",  value: stat.col601 },
-                  { label: "501",  value: stat.col501 },
-                  { label: "AVG",  value: avgPct },
-                  { label: "WP",   value: stat.wp ? `${stat.wp}w` : null },
-                ] as { label: string; value: string | null }[]
-              ).map(({ label, value }) =>
-                value != null ? (
-                  <div key={label} className="bg-slate-800 rounded-lg px-2 py-2.5 text-center border border-slate-700/50">
-                    <div className={`font-bold ${
-                      label === "PTS" ? "text-base text-amber-400" :
-                      label === "AVG" ? "text-sm text-sky-400" :
-                      "text-sm text-slate-200"
-                    }`}>
-                      {value}
-                    </div>
-                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">{label}</div>
-                  </div>
-                ) : null
-              )}
-            </div>
-
-            {/* Stat cards — computed averages */}
-            {(pprDisplay || mprDisplay) && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {pprDisplay && (
-                  <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-center border border-slate-700/50">
-                    <div className="text-sm font-bold text-sky-400">{pprDisplay}</div>
-                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">3DA</div>
-                  </div>
-                )}
-                {mprDisplay && (
-                  <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-center border border-slate-700/50">
-                    <div className="text-sm font-bold text-emerald-400">{mprDisplay}</div>
-                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">MPR</div>
-                  </div>
-                )}
-              </div>
+          <div className="mt-4 grid grid-cols-4 sm:grid-cols-8 gap-2">
+            {(
+              [
+                { label: "PTS",  value: stat.setWins != null ? String(stat.setWins) : null, color: "text-amber-400 text-base" },
+                { label: "CRKT", value: stat.crkt,   color: "text-slate-200 text-sm" },
+                { label: "601",  value: stat.col601, color: "text-slate-200 text-sm" },
+                { label: "501",  value: stat.col501, color: "text-slate-200 text-sm" },
+                { label: "AVG",  value: avgPct,      color: "text-sky-400 text-sm" },
+                { label: "WP",   value: stat.wp ? `${stat.wp}w` : null, color: "text-slate-200 text-sm" },
+                { label: "3DA",  value: pprDisplay,  color: "text-sky-400 text-sm" },
+                { label: "MPR",  value: mprDisplay,  color: "text-emerald-400 text-sm" },
+              ] as { label: string; value: string | null; color: string }[]
+            ).map(({ label, value, color }) =>
+              value != null ? (
+                <div key={label} className="bg-slate-800 rounded-lg px-2 py-2.5 text-center border border-slate-700/50">
+                  <div className={`font-bold ${color}`}>{value}</div>
+                  <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">{label}</div>
+                </div>
+              ) : null
             )}
-          </>
+          </div>
         )}
       </div>
 
@@ -206,6 +181,7 @@ export default async function PlayerPage({
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500" title="High Out (>100)">H Out</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-sky-500" title="3-Dart Avg (01 games)">3DA</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="9-mark cricket turns">RO9</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500" title="Cricket rounds with 6+ marks">RNDS</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-emerald-600" title="Marks Per Round (Cricket)">MPR</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="Highest single-set avg (01)">LDG</th>
               </tr>
@@ -246,6 +222,9 @@ export default async function PlayerPage({
                   </td>
                   <td className="px-3 py-2 text-center text-slate-400 tabular-nums border-l border-slate-800">
                     {w.ro9 > 0 ? w.ro9 : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums">
+                    {w.rnds > 0 ? w.rnds : "—"}
                   </td>
                   <td className="px-3 py-2 text-center text-emerald-400 tabular-nums font-medium">
                     {w.mpr != null ? parseFloat(String(w.mpr)).toFixed(2) : "—"}

@@ -36,9 +36,10 @@ export default function RootLayout({
             </div>
             <nav className="flex gap-1 text-sm font-medium">
               {[
-                { href: "/", label: "Leaderboard" },
-                { href: "/schedule", label: "Schedule" },
-                { href: "/results", label: "Results" },
+                { href: "/", label: "Home" },
+                { href: "/leaderboard", label: "Leaderboard" },
+                { href: "/standings", label: "Standings" },
+                { href: "/matches", label: "Matches" },
               ].map(({ href, label }) => (
                 <Link
                   key={href}

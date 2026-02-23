@@ -367,5 +367,97 @@ export async function fetchGameSegments(matchGuid: string): Promise<DCGameSegmen
   return setsRaw.map((set) => (Array.isArray(set) ? (set as DCGameLeg[]) : []));
 }
 
+export interface DCMatchPlayerStat {
+  name: string;
+  total_games: number;
+  total_wins: number;
+  // 01 stats
+  points_scored_01: string;   // e.g. "1,641" — strip commas before parsing
+  darts_thrown_01: string;    // e.g. "102"
+  average_01: string;         // pre-computed PPR e.g. "48.26"
+  // Cricket stats
+  cricket_marks_scored: number;
+  cricket_darts_thrown: number;
+  cricket_average: string | null; // pre-computed MPR e.g. "2.2", null if no cricket played
+}
+
+/** Fetch per-player stats from a match recap page (doubles-level breakdown).
+ *  Returns the `players` array from the Inertia props of recap.dartconnect.com/players/{guid}. */
+export async function fetchMatchPlayerStats(matchGuid: string): Promise<DCMatchPlayerStat[]> {
+  const url = `https://recap.dartconnect.com/players/${matchGuid}`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      Accept: "text/html",
+    },
+  });
+  if (!res.ok) throw new Error(`recap/players fetch error ${res.status} for ${matchGuid}`);
+
+  const html = await res.text();
+  const m = html.match(/data-page="([^"]+)"/);
+  if (!m) throw new Error(`no data-page in recap/players for ${matchGuid}`);
+
+  const json = JSON.parse(m[1].replace(/&quot;/g, '"'));
+  const props = json.props as Record<string, unknown>;
+  return (props.players ?? []) as DCMatchPlayerStat[];
+}
+
+export interface DCLeaderboardStat {
+  first_name: string;
+  last_name: string;
+  player_guid: number;
+  team_name: string;
+  division: string;
+  // Cricket: points_scored = marks, rounds_played = turns played
+  points_scored: number;
+  darts_thrown: number;
+  rounds_played: number;
+  legs: number;
+  wins: number;
+}
+
+/** Fetch the leaderboard stats for a league season.
+ *  game_type: "cricket" for cricket stats.
+ *  player_format: "doubles" for doubles format.
+ *  Returns the `stats` array; MPR = points_scored / rounds_played. */
+export async function fetchLeaderboard(
+  leagueGuid: string,
+  seasonId: number,
+  gameType: string,
+  playerFormat: string
+): Promise<DCLeaderboardStat[]> {
+  const res = await fetch("https://leaderboard.dartconnect.com/getLeaderboard", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    },
+    body: JSON.stringify({
+      mode: "L",
+      id: `${leagueGuid}_${seasonId}_all`,
+      gameTypeFilter: {
+        game_type: gameType,
+        game_name: "all",
+        player_format: playerFormat,
+        in_format: "all",
+        out_format: "all",
+        finish: "all",
+        legs: "all",
+        category: "all",
+        matchCount: "all",
+        range: "all",
+      },
+      logged_in: false,
+      getEvent: false,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`leaderboard fetch error ${res.status}`);
+  const data = await res.json() as { payload?: { stats?: DCLeaderboardStat[] } };
+  return data.payload?.stats ?? [];
+}
+
 /** Get CSRF cookies (exported for reuse across calls in a single scrape) */
 export { getCSRFCookies };

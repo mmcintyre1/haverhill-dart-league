@@ -1,116 +1,230 @@
-import { Suspense } from "react";
-import { db, seasons, playerStats, players } from "@/lib/db";
-import { eq, desc, asc } from "drizzle-orm";
-import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
-import SeasonSelector from "@/components/SeasonSelector";
-import RefreshButton from "@/components/RefreshButton";
+import Link from "next/link";
+import { db, seasons, matches, newsPosts } from "@/lib/db";
+import { eq, desc, asc, and, or, gt } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-async function getSeasons() {
-  return db.select().from(seasons).orderBy(desc(seasons.startDate));
-}
-
-async function getLeaderboard(seasonId: number): Promise<LeaderboardRow[]> {
-  const rows = await db
-    .select({
-      id: playerStats.playerId,
-      pos: playerStats.pos,
-      playerName: players.name,
-      teamName: playerStats.teamName,
-      wp: playerStats.wp,
-      crkt: playerStats.crkt,
-      col601: playerStats.col601,
-      col501: playerStats.col501,
-      sos: playerStats.sos,
-      hundredPlus: playerStats.hundredPlus,
-      rnds: playerStats.rnds,
-      oneEighty: playerStats.oneEighty,
-      roHh: playerStats.roHh,
-      zeroOneHh: playerStats.zeroOneHh,
-      ro9: playerStats.ro9,
-      hOut: playerStats.hOut,
-      ldg: playerStats.ldg,
-      ro6b: playerStats.ro6b,
-      mpr: playerStats.mpr,
-      ppr: playerStats.ppr,
-      avg: playerStats.avg,
-      pts: playerStats.pts,
-    })
-    .from(playerStats)
-    .innerJoin(players, eq(playerStats.playerId, players.id))
-    .where(eq(playerStats.seasonId, seasonId))
-    .orderBy(asc(playerStats.pos));
-
-  return rows;
-}
-
-async function getLastScraped(seasonId: number): Promise<Date | null> {
-  const [row] = await db
-    .select({ lastScrapedAt: seasons.lastScrapedAt })
+async function getActiveSeason() {
+  const [s] = await db
+    .select()
     .from(seasons)
-    .where(eq(seasons.id, seasonId))
+    .where(eq(seasons.isActive, true))
     .limit(1);
-  return row?.lastScrapedAt ?? null;
+  return s ?? null;
 }
 
-export default async function LeaderboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ season?: string }>;
-}) {
-  const params = await searchParams;
-  const allSeasons = await getSeasons();
+async function getNews() {
+  return db
+    .select()
+    .from(newsPosts)
+    .orderBy(desc(newsPosts.publishedAt))
+    .limit(10);
+}
 
-  const activeId =
-    params.season
-      ? parseInt(params.season)
-      : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
+async function getNextRound(seasonId: number) {
+  const pending = await db
+    .select()
+    .from(matches)
+    .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P")))
+    .orderBy(asc(matches.roundSeq), asc(matches.schedDate))
+    .limit(20);
 
-  const [rows, lastScraped] = await Promise.all([
-    activeId ? getLeaderboard(activeId) : Promise.resolve([]),
-    activeId ? getLastScraped(activeId) : Promise.resolve(null),
-  ]);
+  if (pending.length === 0) return null;
+  const nextRound = pending[0].roundSeq;
+  return {
+    round: nextRound,
+    date: pending[0].prettyDate ?? pending[0].schedDate ?? `Week ${nextRound}`,
+    matches: pending.filter((m) => m.roundSeq === nextRound),
+  };
+}
 
-  const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
+async function getLastRound(seasonId: number) {
+  const completed = await db
+    .select()
+    .from(matches)
+    .where(
+      and(
+        eq(matches.seasonId, seasonId),
+        or(eq(matches.status, "C"), gt(matches.homeScore!, 0))
+      )
+    )
+    .orderBy(desc(matches.roundSeq), asc(matches.schedDate))
+    .limit(20);
+
+  if (completed.length === 0) return null;
+  const lastRound = completed[0].roundSeq;
+  return {
+    round: lastRound,
+    date: completed[0].prettyDate ?? completed[0].schedDate ?? `Week ${lastRound}`,
+    matches: completed.filter((m) => m.roundSeq === lastRound),
+  };
+}
+
+function formatDate(d: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
+}
+
+export default async function HomePage() {
+  const [season, news] = await Promise.all([getActiveSeason(), getNews()]);
+
+  const [nextRound, lastRound] = season
+    ? await Promise.all([getNextRound(season.id), getLastRound(season.id)])
+    : [null, null];
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-slate-100">Player Leaderboard</h2>
-          <Suspense fallback={null}>
-            <SeasonSelector seasons={seasonOptions} currentId={activeId ?? null} />
-          </Suspense>
-        </div>
-        <div className="flex items-center gap-4">
-          {lastScraped && (
-            <span className="text-xs text-slate-400">
-              Last updated:{" "}
-              {new Intl.DateTimeFormat("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-                timeZone: "America/New_York",
-              }).format(lastScraped)}{" "}
-              ET
+    <div className="space-y-10">
+      {/* ── Hero ── */}
+      <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl">
+        <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-slate-900/80 pointer-events-none" />
+        <div className="relative px-8 py-12 sm:py-16">
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-amber-400 text-3xl select-none">◎</span>
+            <span className="text-xs font-semibold uppercase tracking-widest text-amber-500">
+              Haverhill Dart League
             </span>
-          )}
-          <RefreshButton />
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-3">
+            Home of Tuesday Night Darts
+          </h1>
+          <p className="text-slate-400 text-base max-w-lg">
+            {season
+              ? `${season.name} is underway. Follow standings, results, and player stats all season long.`
+              : "Stats, schedules, and results for every week of the season."}
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href="/leaderboard"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-semibold px-4 py-2 transition-colors"
+            >
+              View Leaderboard →
+            </Link>
+            <Link
+              href="/matches"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium px-4 py-2 border border-slate-700 transition-colors"
+            >
+              This Week's Matches
+            </Link>
+          </div>
         </div>
       </div>
 
-      {allSeasons.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-600 py-16 text-center text-slate-400">
-          <p className="font-medium">No data yet</p>
-          <p className="mt-1 text-sm">
-            Click &ldquo;Refresh Data&rdquo; to pull the latest from DartConnect.
-          </p>
+      {/* ── Quick Look: Next Up + Last Week ── */}
+      {(nextRound || lastRound) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Next Up */}
+          {nextRound && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+              <div className="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">
+                  Next Up
+                </span>
+                <span className="text-xs text-slate-400">
+                  Week {nextRound.round} — {nextRound.date}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-800">
+                {nextRound.matches.map((m) => (
+                  <div
+                    key={m.id}
+                    className="px-4 py-2.5 flex items-center gap-2 text-sm"
+                  >
+                    <span className="text-slate-500 text-xs w-6 shrink-0">{m.divisionName}</span>
+                    <span className="text-slate-300 font-medium text-right flex-1 truncate">{m.homeTeamName}</span>
+                    <span className="text-slate-600 text-xs shrink-0">vs</span>
+                    <span className="text-slate-300 font-medium flex-1 truncate">{m.awayTeamName}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-4 py-2 border-t border-slate-800">
+                <Link href="/matches" className="text-xs text-slate-500 hover:text-amber-400 transition-colors">
+                  Full schedule →
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* Last Week */}
+          {lastRound && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+              <div className="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Last Week
+                </span>
+                <span className="text-xs text-slate-400">
+                  Week {lastRound.round} — {lastRound.date}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-800">
+                {lastRound.matches.map((m) => {
+                  const hw = (m.homeScore ?? 0) > (m.awayScore ?? 0);
+                  const aw = (m.awayScore ?? 0) > (m.homeScore ?? 0);
+                  return (
+                    <div
+                      key={m.id}
+                      className="px-4 py-2.5 flex items-center gap-2 text-sm"
+                    >
+                      <span className="text-slate-500 text-xs w-6 shrink-0">{m.divisionName}</span>
+                      <span className={`flex-1 text-right truncate font-medium ${hw ? "text-white" : "text-slate-400"}`}>
+                        {m.homeTeamName}
+                      </span>
+                      <span className="text-slate-200 font-bold tabular-nums text-xs shrink-0">
+                        {m.homeScore} – {m.awayScore}
+                      </span>
+                      <span className={`flex-1 truncate font-medium ${aw ? "text-white" : "text-slate-400"}`}>
+                        {m.awayTeamName}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-2 border-t border-slate-800">
+                <Link href="/matches" className="text-xs text-slate-500 hover:text-amber-400 transition-colors">
+                  All results →
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
-      ) : (
-        <LeaderboardTable rows={rows} />
       )}
+
+      {/* ── News ── */}
+      <div>
+        <div className="flex items-center gap-3 mb-4">
+          <h2 className="text-lg font-semibold text-slate-100">News &amp; Announcements</h2>
+          <div className="flex-1 h-px bg-slate-800" />
+        </div>
+
+        {news.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-700 py-14 text-center text-slate-500">
+            <p className="font-medium text-slate-400">Stay tuned for announcements</p>
+            <p className="text-sm mt-1">League news and updates will appear here throughout the season.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {news.map((post) => (
+              <article
+                key={post.id}
+                className="rounded-xl border border-slate-800 bg-slate-900 p-5 hover:border-slate-700 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <h3 className="text-base font-semibold text-white leading-snug">{post.title}</h3>
+                  <time className="text-xs text-slate-500 shrink-0 mt-0.5">
+                    {formatDate(post.publishedAt)}
+                  </time>
+                </div>
+                <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">{post.body}</p>
+                {post.author && (
+                  <p className="mt-3 text-xs text-slate-600">— {post.author}</p>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

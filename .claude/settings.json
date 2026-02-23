@@ -11,7 +11,11 @@
       "Bash(npx create-next-app:*)",
       "Bash(npx tsc:*)",
       "Bash(python -m json.tool:*)",
-      "Bash(npm run db:push:*)"
+      "Bash(npm run db:push:*)",
+      "Bash(npx drizzle-kit push:*)",
+      "WebFetch(domain:leaderboard.dartconnect.com)",
+      "WebFetch(domain:recap.dartconnect.com)",
+      "Bash(done)"
     ],
     "additionalDirectories": [
       "C:\\Users\\mfmci",
