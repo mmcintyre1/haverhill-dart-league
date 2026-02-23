@@ -1,18 +1,26 @@
+import { Suspense } from "react";
 import { db, seasons, teams, matches } from "@/lib/db";
-import { eq, and, or, gt } from "drizzle-orm";
+import { divisions } from "@/lib/db/schema";
+import { eq, and, or, gt, desc, asc } from "drizzle-orm";
+import SeasonSelector from "@/components/SeasonSelector";
+import DivisionSelector from "@/components/DivisionSelector";
 
 export const dynamic = "force-dynamic";
 
-async function getActiveSeason() {
-  const [s] = await db
-    .select()
-    .from(seasons)
-    .where(eq(seasons.isActive, true))
-    .limit(1);
-  return s ?? null;
+async function getSeasons() {
+  return db.select().from(seasons).orderBy(desc(seasons.startDate));
 }
 
-async function getStandings(seasonId: number) {
+async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ name: divisions.name })
+    .from(divisions)
+    .where(eq(divisions.seasonId, seasonId))
+    .orderBy(asc(divisions.name));
+  return rows.map((r) => r.name).filter(Boolean) as string[];
+}
+
+async function getStandings(seasonId: number, divisionFilter: string | null) {
   const [allTeams, allMatches] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
@@ -69,7 +77,7 @@ async function getStandings(seasonId: number) {
     }
   }
 
-  // For teams that still have no divisionName (no played matches yet), fall back to a match lookup
+  // For teams that still have no divisionName, fall back to a match lookup
   for (const t of allTeams) {
     const s = stats.get(t.id);
     if (s && !s.divisionName) {
@@ -80,10 +88,11 @@ async function getStandings(seasonId: number) {
     }
   }
 
-  // Group by division
+  // Group by division, applying optional filter
   const byDiv = new Map<string, (typeof stats extends Map<number, infer V> ? V & { id: number } : never)[]>();
   for (const [id, s] of stats) {
     const div = s.divisionName ?? "Other";
+    if (divisionFilter && div !== divisionFilter) continue;
     if (!byDiv.has(div)) byDiv.set(div, []);
     byDiv.get(div)!.push({ ...s, id });
   }
@@ -93,38 +102,65 @@ async function getStandings(seasonId: number) {
     rows.sort((a, b) => b.wins - a.wins || b.pts - a.pts || a.losses - b.losses);
   }
 
-  // Sort divisions alphabetically
   return Array.from(byDiv.entries()).sort(([a], [b]) => a.localeCompare(b));
 }
 
-export default async function StandingsPage() {
-  const season = await getActiveSeason();
+export default async function StandingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ season?: string; division?: string }>;
+}) {
+  const params = await searchParams;
+  const allSeasons = await getSeasons();
 
-  if (!season) {
+  const activeId =
+    params.season
+      ? parseInt(params.season)
+      : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
+
+  const divisionFilter = params.division ?? null;
+
+  if (!activeId) {
     return (
       <div className="py-16 text-center text-slate-400">
-        <p className="font-medium">No active season found</p>
+        <p className="font-medium">No season found</p>
         <p className="text-sm mt-1">Run a data refresh to load standings.</p>
       </div>
     );
   }
 
-  const divisions = await getStandings(season.id);
+  const [standingsData, divisionList] = await Promise.all([
+    getStandings(activeId, divisionFilter),
+    getDivisionsForSeason(activeId),
+  ]);
+
+  const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
+  const activeSeason = allSeasons.find((s) => s.id === activeId);
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-100">Team Standings — {season.name}</h2>
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <h2 className="text-lg font-semibold text-slate-100">
+          Team Standings — {activeSeason?.name}
+        </h2>
+        <Suspense fallback={null}>
+          <SeasonSelector seasons={seasonOptions} currentId={activeId} />
+        </Suspense>
+        {divisionList.length > 1 && (
+          <Suspense fallback={null}>
+            <DivisionSelector divisions={divisionList} current={divisionFilter ?? "all"} />
+          </Suspense>
+        )}
       </div>
 
-      {divisions.length === 0 ? (
+      {standingsData.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-700 py-16 text-center text-slate-500">
           <p className="font-medium">No standings data yet</p>
           <p className="text-sm mt-1">Results will appear here as matches are played.</p>
         </div>
       ) : (
         <div className="space-y-8">
-          {divisions.map(([divName, rows]) => (
+          {standingsData.map(([divName, rows]) => (
             <div key={divName} className="rounded-lg border border-slate-800 overflow-hidden shadow-xl">
               <div className="bg-slate-800/80 px-4 py-2.5 border-b border-slate-700">
                 <span className="text-sm font-semibold text-slate-200">Division {divName}</span>

@@ -1,8 +1,9 @@
 import { Suspense } from "react";
-import { db, seasons, playerStats, players } from "@/lib/db";
-import { eq, desc, asc } from "drizzle-orm";
+import { db, seasons, playerStats, players, teams, divisions } from "@/lib/db";
+import { eq, and, desc, asc } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
 import SeasonSelector from "@/components/SeasonSelector";
+import DivisionSelector from "@/components/DivisionSelector";
 import RefreshButton from "@/components/RefreshButton";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +12,20 @@ async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
 }
 
-async function getLeaderboard(seasonId: number): Promise<LeaderboardRow[]> {
+async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
   const rows = await db
+    .selectDistinct({ name: divisions.name })
+    .from(divisions)
+    .where(eq(divisions.seasonId, seasonId))
+    .orderBy(asc(divisions.name));
+  return rows.map((r) => r.name).filter(Boolean) as string[];
+}
+
+async function getLeaderboard(
+  seasonId: number,
+  divisionFilter: string | null
+): Promise<LeaderboardRow[]> {
+  const query = db
     .select({
       id: playerStats.playerId,
       pos: playerStats.pos,
@@ -39,10 +52,16 @@ async function getLeaderboard(seasonId: number): Promise<LeaderboardRow[]> {
     })
     .from(playerStats)
     .innerJoin(players, eq(playerStats.playerId, players.id))
-    .where(eq(playerStats.seasonId, seasonId))
+    .leftJoin(teams, eq(playerStats.teamId, teams.id))
+    .leftJoin(divisions, eq(teams.divisionId, divisions.id))
+    .where(
+      divisionFilter
+        ? and(eq(playerStats.seasonId, seasonId), eq(divisions.name, divisionFilter))
+        : eq(playerStats.seasonId, seasonId)
+    )
     .orderBy(asc(playerStats.pos));
 
-  return rows;
+  return query as unknown as Promise<LeaderboardRow[]>;
 }
 
 async function getLastScraped(seasonId: number): Promise<Date | null> {
@@ -57,7 +76,7 @@ async function getLastScraped(seasonId: number): Promise<Date | null> {
 export default async function LeaderboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ season?: string }>;
+  searchParams: Promise<{ season?: string; division?: string }>;
 }) {
   const params = await searchParams;
   const allSeasons = await getSeasons();
@@ -67,9 +86,12 @@ export default async function LeaderboardPage({
       ? parseInt(params.season)
       : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
 
-  const [rows, lastScraped] = await Promise.all([
-    activeId ? getLeaderboard(activeId) : Promise.resolve([]),
+  const divisionFilter = params.division ?? null;
+
+  const [rows, lastScraped, divisionList] = await Promise.all([
+    activeId ? getLeaderboard(activeId, divisionFilter) : Promise.resolve([]),
     activeId ? getLastScraped(activeId) : Promise.resolve(null),
+    activeId ? getDivisionsForSeason(activeId) : Promise.resolve([]),
   ]);
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
@@ -77,11 +99,16 @@ export default async function LeaderboardPage({
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-lg font-semibold text-slate-100">Player Leaderboard</h2>
           <Suspense fallback={null}>
             <SeasonSelector seasons={seasonOptions} currentId={activeId ?? null} />
           </Suspense>
+          {divisionList.length > 1 && (
+            <Suspense fallback={null}>
+              <DivisionSelector divisions={divisionList} current={divisionFilter ?? "all"} />
+            </Suspense>
+          )}
         </div>
         <div className="flex items-center gap-4">
           {lastScraped && (
