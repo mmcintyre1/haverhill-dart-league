@@ -254,7 +254,7 @@ async function scrapeSeasonStats(
 
   for (const team of teamCompetitors) {
     const teamId = String(team.id);
-    const teamName = String(team.name ?? "");
+    const teamName = String(team.team_name ?? team.name ?? "");
     try {
       const c = await getCSRFCookies();
       const res = await fetchPlayerStandings(targetSeasonId, { season_status: "REG", opponent_guid: teamId }, c);
