@@ -93,6 +93,8 @@ export const playerStats = pgTable(
     hOut: integer("h_out"),
     ldg: integer("ldg"),
     ro6b: integer("ro6b"),
+    mpr: numeric("mpr", { precision: 5, scale: 2 }),
+    ppr: numeric("ppr", { precision: 6, scale: 2 }),
     avg: numeric("avg", { precision: 6, scale: 3 }),
     pts: integer("pts"),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -154,6 +156,8 @@ export const playerWeekStats = pgTable(
     ro9: integer("ro9").notNull().default(0),
     hOut: integer("h_out").notNull().default(0),
     ldg: integer("ldg").notNull().default(0),
+    mpr: numeric("mpr", { precision: 5, scale: 2 }),
+    ppr: numeric("ppr", { precision: 6, scale: 2 }),
   },
   (t) => [
     uniqueIndex("player_week_stats_idx").on(t.seasonId, t.playerId, t.weekKey),

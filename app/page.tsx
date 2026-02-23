@@ -32,6 +32,8 @@ async function getLeaderboard(seasonId: number): Promise<LeaderboardRow[]> {
       hOut: playerStats.hOut,
       ldg: playerStats.ldg,
       ro6b: playerStats.ro6b,
+      mpr: playerStats.mpr,
+      ppr: playerStats.ppr,
       avg: playerStats.avg,
       pts: playerStats.pts,
     })

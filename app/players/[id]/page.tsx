@@ -27,6 +27,8 @@ async function getPlayerHeader(playerId: number, seasonId: number) {
       col501: playerStats.col501,
       avg: playerStats.avg,
       hundredPlus: playerStats.hundredPlus,
+      mpr: playerStats.mpr,
+      ppr: playerStats.ppr,
     })
     .from(playerStats)
     .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId)))
@@ -45,6 +47,17 @@ async function getWeeklyRows(playerId: number, seasonId: number) {
 
 function record(wins: number, losses: number): string {
   return wins + losses > 0 ? `${wins}-${losses}` : "—";
+}
+
+const MONTH_IDX: Record<string, number> = {
+  Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11,
+};
+
+function parseWeekKey(key: string): number {
+  const [d, m, y] = key.split(" ");
+  const mi = MONTH_IDX[m];
+  if (mi == null) return 0;
+  return new Date(parseInt(y), mi, parseInt(d)).getTime();
 }
 
 export default async function PlayerPage({
@@ -71,7 +84,7 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">No seasons available.</div>;
   }
 
-  const [{ player, stat }, weeks] = await Promise.all([
+  const [{ player, stat }, weeksRaw] = await Promise.all([
     getPlayerHeader(playerId, activeId),
     getWeeklyRows(playerId, activeId),
   ]);
@@ -80,6 +93,9 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">Player not found.</div>;
   }
 
+  // Sort weeks chronologically ("D Mon YYYY" doesn't sort correctly as a string)
+  const weeks = [...weeksRaw].sort((a, b) => parseWeekKey(a.weekKey) - parseWeekKey(b.weekKey));
+
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
   const seasonName = allSeasons.find((s) => s.id === activeId)?.name ?? "";
 
@@ -87,22 +103,30 @@ export default async function PlayerPage({
     ? `${(parseFloat(String(stat.avg)) * 100).toFixed(1)}%`
     : null;
 
+  const pprDisplay = stat?.ppr != null
+    ? parseFloat(String(stat.ppr)).toFixed(1)
+    : null;
+
+  const mprDisplay = stat?.mpr != null
+    ? parseFloat(String(stat.mpr)).toFixed(2)
+    : null;
+
   return (
     <div>
       {/* Back link */}
       <div className="mb-5">
-        <Link href="/" className="text-sm text-sky-400 hover:text-sky-300 transition-colors">
-          ← Back to Leaderboard
+        <Link href="/" className="text-sm text-slate-400 hover:text-amber-400 transition-colors">
+          ← Leaderboard
         </Link>
       </div>
 
       {/* Player header card */}
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-5 mb-6">
+      <div className="bg-slate-900 rounded-lg border border-slate-800 p-5 mb-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-white">{player.name}</h2>
             {stat?.teamName && (
-              <p className="text-slate-400 text-sm mt-0.5">{stat.teamName}</p>
+              <p className="text-slate-500 text-sm mt-0.5">{stat.teamName} · {seasonName}</p>
             )}
           </div>
           <Suspense fallback={null}>
@@ -111,85 +135,122 @@ export default async function PlayerPage({
         </div>
 
         {stat && (
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <span className="text-slate-300">
-              <span className="text-slate-500 mr-1">{seasonName}</span>
-              {stat.crkt && <span className="mr-3">CRKT {stat.crkt}</span>}
-              {stat.col601 && <span className="mr-3">601 {stat.col601}</span>}
-              {stat.col501 && <span>501 {stat.col501}</span>}
-            </span>
-            {avgPct && (
-              <span className="text-sky-300 font-medium">{avgPct} AVG</span>
+          <>
+            {/* Stat cards — record stats */}
+            <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {(
+                [
+                  { label: "PTS",  value: stat.setWins != null ? String(stat.setWins) : null },
+                  { label: "CRKT", value: stat.crkt },
+                  { label: "601",  value: stat.col601 },
+                  { label: "501",  value: stat.col501 },
+                  { label: "AVG",  value: avgPct },
+                  { label: "WP",   value: stat.wp ? `${stat.wp}w` : null },
+                ] as { label: string; value: string | null }[]
+              ).map(({ label, value }) =>
+                value != null ? (
+                  <div key={label} className="bg-slate-800 rounded-lg px-2 py-2.5 text-center border border-slate-700/50">
+                    <div className={`font-bold ${
+                      label === "PTS" ? "text-base text-amber-400" :
+                      label === "AVG" ? "text-sm text-sky-400" :
+                      "text-sm text-slate-200"
+                    }`}>
+                      {value}
+                    </div>
+                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">{label}</div>
+                  </div>
+                ) : null
+              )}
+            </div>
+
+            {/* Stat cards — computed averages */}
+            {(pprDisplay || mprDisplay) && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {pprDisplay && (
+                  <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-center border border-slate-700/50">
+                    <div className="text-sm font-bold text-sky-400">{pprDisplay}</div>
+                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">3DA</div>
+                  </div>
+                )}
+                {mprDisplay && (
+                  <div className="bg-slate-800 rounded-lg px-4 py-2.5 text-center border border-slate-700/50">
+                    <div className="text-sm font-bold text-emerald-400">{mprDisplay}</div>
+                    <div className="text-[0.6rem] uppercase tracking-wider text-slate-500 mt-1">MPR</div>
+                  </div>
+                )}
+              </div>
             )}
-            {stat.setWins != null && (
-              <span className="text-white font-bold">{stat.setWins} PTS</span>
-            )}
-            {stat.wp && (
-              <span className="text-slate-400">{stat.wp} weeks played</span>
-            )}
-          </div>
+          </>
         )}
       </div>
 
       {/* Week-by-week table */}
       {weeks.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-600 py-12 text-center text-slate-400">
+        <div className="rounded-lg border border-dashed border-slate-700 py-12 text-center text-slate-500">
           <p className="font-medium">No weekly data yet</p>
           <p className="text-sm mt-1">Run a scrape to populate week-by-week stats.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-700 shadow-xl">
+        <div className="overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="bg-slate-800 text-slate-200 border-b border-slate-600">
-                <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Week</th>
-                <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Opponent</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">Sets</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">601</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">CRKT</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">501</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap" title="100+ score total">100+</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap">180</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap" title="9-mark cricket turns">RO9</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap" title="High Out (>100)">H Out</th>
-                <th className="px-3 py-2.5 text-center font-semibold whitespace-nowrap" title="Highest single-set average">LDG</th>
+              <tr className="bg-slate-900 border-b border-slate-700/80">
+                <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">Week</th>
+                <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">Opponent</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">Sets</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60">601</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">CRKT</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">501</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="100+ score total">100+</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500">180</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500" title="High Out (>100)">H Out</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-sky-500" title="3-Dart Avg (01 games)">3DA</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="9-mark cricket turns">RO9</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-emerald-600" title="Marks Per Round (Cricket)">MPR</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="Highest single-set avg (01)">LDG</th>
               </tr>
             </thead>
             <tbody>
               {weeks.map((w, i) => (
                 <tr
                   key={w.id}
-                  className={`border-b border-slate-700/50 hover:bg-slate-700/40 transition-colors ${
-                    i % 2 === 0 ? "bg-slate-800" : "bg-slate-800/50"
+                  className={`border-b border-slate-800 hover:bg-amber-500/5 transition-colors ${
+                    i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
                   }`}
                 >
                   <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{w.weekKey}</td>
-                  <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{w.opponentTeam ?? "—"}</td>
-                  <td className="px-3 py-2 text-center text-slate-200 tabular-nums">
+                  <td className="px-3 py-2 text-slate-400 whitespace-nowrap text-xs">{w.opponentTeam ?? "—"}</td>
+                  <td className="px-3 py-2 text-center text-slate-200 tabular-nums font-medium">
                     {record(w.setWins, w.setLosses)}
                   </td>
-                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums">
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums border-l border-slate-800">
                     {record(w.col601Wins, w.col601Losses)}
                   </td>
-                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums">
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums">
                     {record(w.crktWins, w.crktLosses)}
                   </td>
-                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums">
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums">
                     {record(w.col501Wins, w.col501Losses)}
                   </td>
-                  <td className="px-3 py-2 text-center text-slate-200 tabular-nums font-medium">
+                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums border-l border-slate-800">
                     {w.hundredPlus > 0 ? w.hundredPlus : "—"}
                   </td>
-                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums">
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums">
                     {w.oneEighty > 0 ? w.oneEighty : "—"}
                   </td>
                   <td className="px-3 py-2 text-center text-slate-300 tabular-nums">
-                    {w.ro9 > 0 ? w.ro9 : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-center text-slate-200 tabular-nums">
                     {w.hOut > 0 ? w.hOut : "—"}
                   </td>
-                  <td className="px-3 py-2 text-center text-sky-300 tabular-nums font-medium">
+                  <td className="px-3 py-2 text-center text-sky-400 tabular-nums font-medium">
+                    {w.ppr != null ? parseFloat(String(w.ppr)).toFixed(1) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center text-slate-400 tabular-nums border-l border-slate-800">
+                    {w.ro9 > 0 ? w.ro9 : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center text-emerald-400 tabular-nums font-medium">
+                    {w.mpr != null ? parseFloat(String(w.mpr)).toFixed(2) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center text-slate-300 tabular-nums border-l border-slate-800">
                     {w.ldg > 0 ? w.ldg : "—"}
                   </td>
                 </tr>

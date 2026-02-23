@@ -33,7 +33,7 @@ export default async function SchedulePage() {
   const season = await getActiveSeason();
   if (!season) {
     return (
-      <div className="py-16 text-center text-gray-500">
+      <div className="py-16 text-center text-slate-400">
         <p className="font-medium">No active season found</p>
         <p className="text-sm mt-1">Run a data refresh to load the schedule.</p>
       </div>
@@ -57,15 +57,15 @@ export default async function SchedulePage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">
+        <h2 className="text-lg font-semibold text-slate-100">
           Upcoming Schedule — {season.name}
         </h2>
-        <span className="text-sm text-gray-500">{pending.length} matches remaining</span>
+        <span className="text-sm text-slate-400">{pending.length} matches remaining</span>
       </div>
 
       {rounds.length === 0 ? (
-        <div className="py-16 text-center text-gray-500">
-          <p>No upcoming matches found.</p>
+        <div className="rounded-lg border border-dashed border-slate-600 py-16 text-center text-slate-400">
+          <p className="font-medium">No upcoming matches found.</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -75,32 +75,32 @@ export default async function SchedulePage() {
             const timeStr = formatTime(firstMatch?.schedTime ?? null);
 
             return (
-              <div key={round} className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
-                <div className="bg-[#3a5a8a] px-4 py-2 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-white">
+              <div key={round} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                <div className="bg-slate-700 px-4 py-2 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-slate-200">
                     Week {round} — {dateStr}
                   </span>
                   {timeStr && (
-                    <span className="text-xs text-blue-200">{timeStr}</span>
+                    <span className="text-xs text-slate-400">{timeStr}</span>
                   )}
                 </div>
-                <table className="w-full text-sm">
+                <table className="w-full text-sm border-collapse">
                   <tbody>
                     {ms.map((m) => (
                       <tr
                         key={m.id}
-                        className="border-t border-gray-100 hover:bg-gray-50 transition-colors"
+                        className="border-t border-slate-700/50 hover:bg-slate-700/40 transition-colors bg-slate-800"
                       >
-                        <td className="px-4 py-2.5 text-xs text-gray-400 w-12">
+                        <td className="px-4 py-2.5 text-xs text-slate-500 w-12">
                           {m.divisionName ?? ""}
                         </td>
-                        <td className="px-4 py-2.5 font-medium text-gray-800 text-right">
+                        <td className="px-4 py-2.5 font-medium text-slate-200 text-right whitespace-nowrap">
                           {m.homeTeamName}
                         </td>
-                        <td className="px-4 py-2.5 text-center text-gray-400 font-semibold w-16">
+                        <td className="px-4 py-2.5 text-center text-slate-500 text-xs font-medium w-10">
                           vs
                         </td>
-                        <td className="px-4 py-2.5 font-medium text-gray-800">
+                        <td className="px-4 py-2.5 font-medium text-slate-200 whitespace-nowrap">
                           {m.awayTeamName}
                         </td>
                       </tr>

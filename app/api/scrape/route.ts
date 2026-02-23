@@ -76,7 +76,9 @@ interface WeekAccum {
   oneEighty: number;
   ro9: number;
   hOut: number;   // max for the week
-  ldg: number;    // max for the week
+  ldg: number;    // max 01-leg PPR for the week
+  crktMprSum: number; crktMprCount: number;
+  zeroOnePprSum: number; zeroOnePprCount: number;
 }
 
 function emptyWeek(opponentTeam: string): WeekAccum {
@@ -87,6 +89,8 @@ function emptyWeek(opponentTeam: string): WeekAccum {
     col601Wins: 0, col601Losses: 0,
     col501Wins: 0, col501Losses: 0,
     hundredPlus: 0, oneEighty: 0, ro9: 0, hOut: 0, ldg: 0,
+    crktMprSum: 0, crktMprCount: 0,
+    zeroOnePprSum: 0, zeroOnePprCount: 0,
   };
 }
 
@@ -108,6 +112,8 @@ interface PlayerAccum {
   ro9: number;
   hOut: number;
   maxSetAvg: number;
+  crktMprSum: number; crktMprCount: number;
+  zeroOnePprSum: number; zeroOnePprCount: number;
   weekHundredPlus: Map<string, number>;
   weeksPlayed: Set<string>;
   opponentNames: string[];
@@ -123,6 +129,8 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     col601Wins: 0, col601Losses: 0,
     col501Wins: 0, col501Losses: 0,
     hundredPlus: 0, cricketRnds: 0, oneEighty: 0, ro9: 0, hOut: 0, maxSetAvg: 0,
+    crktMprSum: 0, crktMprCount: 0,
+    zeroOnePprSum: 0, zeroOnePprCount: 0,
     weekHundredPlus: new Map(),
     weeksPlayed: new Set(),
     opponentNames: [],
@@ -277,6 +285,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Collect a sample of cricket turn_score values for debug inspection
+    const sampleCricketScores: string[] = [];
+
     for (const [guid, sets] of segmentsMap) {
       const meta = matchMeta.get(guid);
       if (!meta) continue;
@@ -353,6 +364,12 @@ export async function POST(req: NextRequest) {
               // For 01 games turn_score is numeric; for cricket it's a notation string
               const score01 = is01 ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
               const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
+
+              // Sample cricket notations for debug (first 20 distinct non-null values)
+              if (isCrkt && t.turn_score != null && sampleCricketScores.length < 20) {
+                const s = String(t.turn_score);
+                if (!sampleCricketScores.includes(s)) sampleCricketScores.push(s);
+              }
               const remaining = t.current_score;
 
               const w = acc.weekStats.get(weekKey);
@@ -377,8 +394,8 @@ export async function POST(req: NextRequest) {
                 if (w && score01 > w.hOut) w.hOut = score01;
               }
 
-              // Cricket marks for RNDS: legs 1 and 2 only (not leg 3 tiebreaker)
-              if (isCrkt && leg.set_game_number !== 3) {
+              // RNDS: sum of marks from cricket turns that scored >= 6 marks, legs 1+2 only
+              if (isCrkt && leg.set_game_number !== 3 && crktMarks >= 6) {
                 acc.cricketRnds += crktMarks;
               }
 
@@ -390,7 +407,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // LDG: track highest per-leg PPR seen for each player (season + weekly)
+          // LDG / PPR / MPR: process per-leg averages, routing by game type
           for (const side of ["home", "away"] as const) {
             const pprStr = leg[side]?.ppr;
             if (pprStr == null) continue;
@@ -400,9 +417,18 @@ export async function POST(req: NextRequest) {
             for (const pname of sideNames) {
               const acc = accumByName.get(pname);
               if (!acc) continue;
-              if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
               const w = acc.weekStats.get(weekKey);
-              if (w && pprVal > w.ldg) w.ldg = pprVal;
+              if (type === "crkt") {
+                // Cricket: accumulate MPR (leg.ppr = MPR for cricket legs)
+                acc.crktMprSum += pprVal; acc.crktMprCount++;
+                if (w) { w.crktMprSum += pprVal; w.crktMprCount++; }
+              } else {
+                // 01 games: LDG (max) + PPR average
+                if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
+                if (w && pprVal > w.ldg) w.ldg = pprVal;
+                acc.zeroOnePprSum += pprVal; acc.zeroOnePprCount++;
+                if (w) { w.zeroOnePprSum += pprVal; w.zeroOnePprCount++; }
+              }
             }
           }
         }
@@ -501,7 +527,23 @@ export async function POST(req: NextRequest) {
       matchesUpdated++;
     }
 
-    // ── 10. Upsert player stats ─────────────────────────────────────────────
+    // ── 10. Fetch season-total player stats (using league GUID, not team ID) ───
+    // Per-team calls above use opponent_guid=teamId, so marks_cr/ppr/mpr in those
+    // rows are filtered to games against that one team, not season totals.
+    // This single call with the default league GUID returns overall season stats.
+    const seasonStatById = new Map<number, DCPlayerStat>();
+    try {
+      const seasonTotals = await fetchPlayerStandings(seasonId);
+      for (const sp of seasonTotals.roster ?? []) {
+        seasonStatById.set(sp.id, sp);
+      }
+      debug.seasonTotalsCount = seasonStatById.size;
+    } catch (e) {
+      debug.seasonTotalsError = e instanceof Error ? e.message : String(e);
+    }
+    debug.sampleCricketScores = sampleCricketScores;
+
+    // ── 11. Upsert player stats ─────────────────────────────────────────────
     let playersUpdated = 0;
 
     for (const p of roster) {
@@ -535,6 +577,10 @@ export async function POST(req: NextRequest) {
 
       // Pull from segment-based accumulator (falls back to zeros if no games yet)
       const acc = accumByName.get(playerName);
+
+      // Season-total stats from the league-wide standings call
+      const dcIdNum = s.id != null ? Number(s.id) : null;
+      const seasonStat = dcIdNum != null ? seasonStatById.get(dcIdNum) : null;
 
       const setWins   = acc?.setWins   ?? 0;
       const setLosses = acc?.setLosses ?? 0;
@@ -587,7 +633,7 @@ export async function POST(req: NextRequest) {
         col501,
         sos,
         hundredPlus: acc?.hundredPlus     ?? 0,
-        rnds:        acc?.cricketRnds    ?? 0,
+        rnds:        acc?.cricketRnds      ?? 0,
         oneEighty:   acc?.oneEighty       ?? 0,
         roHh:        0,  // not computed
         zeroOneHh,
@@ -595,6 +641,10 @@ export async function POST(req: NextRequest) {
         hOut:        acc?.hOut            ?? 0,
         ldg:         acc ? Math.round(acc.maxSetAvg) : 0,
         ro6b:        0,  // not computed
+        mpr:         seasonStat?.mpr != null && Number(seasonStat.mpr) > 0
+          ? String(parseFloat(String(seasonStat.mpr)).toFixed(2)) : null,
+        ppr:         seasonStat?.ppr != null && Number(seasonStat.ppr) > 0
+          ? String(parseFloat(String(seasonStat.ppr)).toFixed(2)) : null,
         avg:         avgPct != null ? String(avgPct.toFixed(3)) : null,
         pts:         setWins,
         updatedAt:   new Date(),
@@ -631,6 +681,10 @@ export async function POST(req: NextRequest) {
               ro9: w.ro9,
               hOut: w.hOut,
               ldg: Math.round(w.ldg),
+              mpr: w.crktMprCount > 0
+                ? String((w.crktMprSum / w.crktMprCount).toFixed(2)) : null,
+              ppr: w.zeroOnePprCount > 0
+                ? String((w.zeroOnePprSum / w.zeroOnePprCount).toFixed(2)) : null,
             })
             .onConflictDoUpdate({
               target: [playerWeekStats.seasonId, playerWeekStats.playerId, playerWeekStats.weekKey],
@@ -649,6 +703,10 @@ export async function POST(req: NextRequest) {
                 ro9: w.ro9,
                 hOut: w.hOut,
                 ldg: Math.round(w.ldg),
+                mpr: w.crktMprCount > 0
+                  ? String((w.crktMprSum / w.crktMprCount).toFixed(2)) : null,
+                ppr: w.zeroOnePprCount > 0
+                  ? String((w.zeroOnePprSum / w.zeroOnePprCount).toFixed(2)) : null,
               },
             });
         }

@@ -22,32 +22,43 @@ export interface LeaderboardRow {
   hOut: number | null;
   ldg: number | null;
   ro6b: number | null;
+  mpr: string | null;
+  ppr: string | null;
   avg: string | null;
   pts: number | null;
 }
 
 type SortKey = keyof LeaderboardRow;
 
-const COLUMNS: { key: SortKey; label: string; title?: string }[] = [
-  { key: "pos", label: "Pos" },
+// sectionStart adds a visual left-border divider to group related columns
+const COLUMNS: { key: SortKey; label: string; title?: string; sectionStart?: boolean }[] = [
+  // Identity
+  { key: "pos",        label: "Pos" },
   { key: "playerName", label: "Name" },
-  { key: "teamName", label: "Team" },
-  { key: "wp", label: "WP", title: "Weeks Played" },
-  { key: "crkt", label: "CRKT", title: "Cricket Record" },
-  { key: "col601", label: "601" },
-  { key: "col501", label: "501" },
-  { key: "sos", label: "SOS", title: "Strength of Schedule" },
-  { key: "hundredPlus", label: "100+", title: "100+ score total" },
-  { key: "rnds", label: "RNDS", title: "Sets played" },
-  { key: "oneEighty", label: "180" },
-  { key: "roHh", label: "RO HH", title: "Rounds of Head-to-Head" },
-  { key: "zeroOneHh", label: "01 HH", title: "01 Hot Hand" },
-  { key: "ro9", label: "RO9", title: "9-mark cricket turns" },
-  { key: "hOut", label: "H Out", title: "High Out (>100)" },
-  { key: "ldg", label: "LDG", title: "Highest single-set average" },
-  { key: "ro6b", label: "RO6B" },
-  { key: "avg", label: "AVG", title: "Set Win %" },
-  { key: "pts", label: "PTS", title: "Total Set Wins" },
+  { key: "teamName",   label: "Team" },
+  { key: "wp",         label: "WP",    title: "Weeks Played" },
+  // Records
+  { key: "crkt",       label: "CRKT",  title: "Cricket Record",              sectionStart: true },
+  { key: "col601",     label: "601" },
+  { key: "col501",     label: "501" },
+  // 01 Stats
+  { key: "hundredPlus", label: "100+", title: "100+ score total",             sectionStart: true },
+  { key: "oneEighty",  label: "180" },
+  { key: "hOut",       label: "H Out", title: "High Out (>100)" },
+  { key: "ppr",        label: "3DA",   title: "3-Dart Avg (01 games)" },
+  // Cricket Stats
+  { key: "rnds",       label: "RNDS",  title: "Cricket marks (legs 1+2)",     sectionStart: true },
+  { key: "ro9",        label: "RO9",   title: "9-mark cricket turns" },
+  { key: "mpr",        label: "MPR",   title: "Marks Per Round (Cricket)" },
+  // Misc
+  { key: "sos",        label: "SOS",   title: "Strength of Schedule",         sectionStart: true },
+  { key: "roHh",       label: "RO HH", title: "Rounds of Head-to-Head" },
+  { key: "zeroOneHh",  label: "01 HH", title: "01 Hot Hand" },
+  { key: "ldg",        label: "LDG",   title: "Highest single-set avg (01)" },
+  { key: "ro6b",       label: "RO6B" },
+  // Summary
+  { key: "avg",        label: "AVG",   title: "Set Win %",                    sectionStart: true },
+  { key: "pts",        label: "PTS",   title: "Total Set Wins" },
 ];
 
 function numericSort(a: LeaderboardRow, b: LeaderboardRow, key: SortKey, dir: 1 | -1) {
@@ -91,23 +102,25 @@ export default function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-700 shadow-xl">
+    <div className="overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
       <table className="w-full text-sm border-collapse">
         <thead>
-          <tr className="bg-slate-800 text-slate-200 border-b border-slate-600">
+          <tr className="bg-slate-900 border-b border-slate-700/80">
             {COLUMNS.map((col) => (
               <th
                 key={col.key}
                 title={col.title}
                 onClick={() => handleSort(col.key)}
-                className={`px-2 py-2.5 text-center font-semibold cursor-pointer select-none whitespace-nowrap transition-colors ${
+                className={`px-2 py-2 text-center font-medium cursor-pointer select-none whitespace-nowrap transition-colors text-[0.65rem] uppercase tracking-wider ${
+                  col.sectionStart ? "border-l border-slate-700/60" : ""
+                } ${
                   col.key === sortKey
-                    ? "text-sky-400 bg-slate-700"
-                    : "hover:bg-slate-700 hover:text-sky-300"
+                    ? "text-amber-400 bg-slate-800"
+                    : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/60"
                 }`}
               >
                 {col.label}
-                <span className="text-xs opacity-80">{arrow(col.key)}</span>
+                <span className="opacity-70">{arrow(col.key)}</span>
               </th>
             ))}
           </tr>
@@ -116,37 +129,49 @@ export default function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
           {sorted.map((row, i) => (
             <tr
               key={`${row.playerName}-${i}`}
-              className={`border-b border-slate-700/50 transition-colors hover:bg-slate-700/40 ${
-                i % 2 === 0 ? "bg-slate-800" : "bg-slate-800/50"
+              className={`border-b border-slate-800 transition-colors hover:bg-amber-500/5 ${
+                i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
               }`}
             >
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.pos ?? i + 1}</td>
+              {/* Identity */}
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.pos ?? i + 1}</td>
               <td className="px-2 py-1.5 whitespace-nowrap">
-                <Link href={`/players/${row.id}`} className="font-medium text-sky-400 hover:text-sky-300 hover:underline">
+                <Link href={`/players/${row.id}`} className="font-semibold text-slate-100 hover:text-amber-400 transition-colors">
                   {row.playerName}
                 </Link>
               </td>
-              <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{row.teamName ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.wp ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-200 tabular-nums">{row.crkt ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.col601 ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.col501 ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.sos ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-200 tabular-nums">{row.hundredPlus ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.rnds ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.oneEighty ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.roHh ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.zeroOneHh ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.ro9 ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-200 tabular-nums">{row.hOut ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-200 tabular-nums">{row.ldg ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.ro6b ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-sky-300 font-medium tabular-nums">
+              <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap text-xs">{row.teamName ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.wp ?? "—"}</td>
+              {/* Records */}
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.crkt ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col601 ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col501 ?? "—"}</td>
+              {/* 01 Stats */}
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.hundredPlus ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.oneEighty ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.hOut ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-sky-400 tabular-nums font-medium">
+                {row.ppr != null ? parseFloat(row.ppr).toFixed(1) : "—"}
+              </td>
+              {/* Cricket Stats */}
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{row.rnds ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.ro9 ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-emerald-400 tabular-nums font-medium">
+                {row.mpr != null ? parseFloat(row.mpr).toFixed(2) : "—"}
+              </td>
+              {/* Misc */}
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums border-l border-slate-800">{row.sos ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.roHh ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.zeroOneHh ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.ldg ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.ro6b ?? "—"}</td>
+              {/* Summary */}
+              <td className="px-2 py-1.5 text-center text-sky-400 font-medium tabular-nums border-l border-slate-800">
                 {row.avg != null
                   ? `${(parseFloat(row.avg) * 100).toFixed(1)}%`
                   : "—"}
               </td>
-              <td className="px-2 py-1.5 text-center font-bold text-white tabular-nums">{row.pts ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center font-bold text-amber-400 tabular-nums">{row.pts ?? "—"}</td>
             </tr>
           ))}
         </tbody>
