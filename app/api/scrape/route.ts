@@ -17,6 +17,7 @@ import {
   type DCMatchHistoryEntry,
   type DCGameLeg,
   type DCMatchPlayerStat,
+  type DCSeason,
 } from "@/lib/dartconnect";
 
 export const runtime = "nodejs";
@@ -32,7 +33,6 @@ export const maxDuration = 60;
  */
 function parseCricketMarks(notation: unknown): number {
   if (typeof notation !== "string") return 0;
-  // Match hits like T20, S18, D20, SB, DB optionally followed by x{single digit}
   const re = /([TDS](?:B|[0-9]+))(?:x([0-9]))?/g;
   let marks = 0;
   let m: RegExpExecArray | null;
@@ -78,10 +78,9 @@ interface WeekAccum {
   hundredPlus: number;
   oneEighty: number;
   ro9: number;
-  hOut: number;   // max for the week
-  ldg: number;    // max 01-leg PPR for the week
+  hOut: number;
+  ldg: number;
   rnds: number;
-  // MPR/PPR sourced from recap/players/{matchGuid} (not computed from turn notation)
   mpr: string | null;
   ppr: string | null;
 }
@@ -99,34 +98,26 @@ function emptyWeek(opponentTeam: string): WeekAccum {
 }
 
 interface PlayerAccum {
-  // identifiers
   dcId: string;
   name: string;
   teamName: string;
-  // set records (season totals)
-  setWins: number;
-  setLosses: number;
+  setWins: number; setLosses: number;
   crktWins: number; crktLosses: number;
   col601Wins: number; col601Losses: number;
   col501Wins: number; col501Losses: number;
-  // detailed stats (season totals)
   hundredPlus: number;
   cricketRnds: number;
   oneEighty: number;
   ro9: number;
   hOut: number;
   maxSetAvg: number;
-  // Season PPR aggregated from recap/players across all matches
-  // (leaderboard API handles MPR; PPR we sum points+darts and compute at upsert time)
   zeroOnePointsTotal: number;
   zeroOneDartsTotal: number;
-  // Season cricket totals for MPR fallback (when player is absent from leaderboard API)
   crktMarksTotal: number;
   crktDartsTotal: number;
   weekHundredPlus: Map<string, number>;
   weeksPlayed: Set<string>;
   opponentNames: string[];
-  // per-week breakdown
   weekStats: Map<string, WeekAccum>;
 }
 
@@ -147,8 +138,594 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
   };
 }
 
+// ── backfillArchivedMetadata ──────────────────────────────────────────────────
+// Lightweight pass over archived seasons: reads standings page props and stores
+// divisions + teams + W/L so the standings page and division filter work for all
+// historical seasons without running the full stats pipeline.
+// Fast and idempotent — always runs on every scrape.
+
+async function backfillArchivedMetadata(
+  archivedSeasons: DCSeason[],
+  debug: Record<string, unknown>
+): Promise<void> {
+  if (archivedSeasons.length === 0) return;
+  let ok = 0;
+  for (const s of archivedSeasons) {
+    try {
+      type ArchComp = Record<string, unknown>;
+      let comps: ArchComp[] = [];
+      try {
+        const props = await fetchStandingsPageProps(s.id);
+        comps = (props.competitors ?? []) as ArchComp[];
+      } catch { /* very old seasons may not have standings */ }
+      if (comps.length === 0) { ok++; continue; }
+
+      // Upsert divisions
+      const divIdMap = new Map<number, number>(); // dcId → serial id
+      for (const comp of comps) {
+        const dcDivId = comp.division_id != null ? Number(comp.division_id) : null;
+        if (dcDivId == null) continue;
+        const [row] = await db
+          .insert(divisions)
+          .values({ dcId: dcDivId, seasonId: s.id, name: String(comp.division ?? "") })
+          .onConflictDoUpdate({ target: [divisions.dcId, divisions.seasonId], set: { name: String(comp.division ?? "") } })
+          .returning({ id: divisions.id });
+        if (row) divIdMap.set(dcDivId, row.id);
+      }
+
+      // Upsert teams
+      for (const comp of comps) {
+        const dcTeamId = Number(comp.id);
+        if (!dcTeamId) continue;
+        const dcDivId = comp.division_id != null ? Number(comp.division_id) : null;
+        await db
+          .insert(teams)
+          .values({
+            dcId: dcTeamId,
+            seasonId: s.id,
+            divisionId: dcDivId != null ? (divIdMap.get(dcDivId) ?? null) : null,
+            name: String(comp.team_name ?? comp.name ?? ""),
+            dcWins: comp.win != null ? Number(comp.win) : null,
+            dcLosses: comp.loss != null ? Number(comp.loss) : null,
+            dcLeaguePoints: comp.league_points != null ? Number(comp.league_points) : null,
+          })
+          .onConflictDoUpdate({
+            target: [teams.dcId, teams.seasonId],
+            set: {
+              divisionId: dcDivId != null ? (divIdMap.get(dcDivId) ?? null) : null,
+              dcWins: comp.win != null ? Number(comp.win) : null,
+              dcLosses: comp.loss != null ? Number(comp.loss) : null,
+              dcLeaguePoints: comp.league_points != null ? Number(comp.league_points) : null,
+            },
+          });
+      }
+      ok++;
+    } catch (e) {
+      debug.archivedSeasonErrors = [
+        ...((debug.archivedSeasonErrors as string[]) ?? []),
+        `Season ${s.id}: ${e instanceof Error ? e.message : String(e)}`,
+      ];
+    }
+  }
+  debug.archivedSeasonsProcessed = ok;
+}
+
+// ── scrapeSeasonStats ─────────────────────────────────────────────────────────
+// Full stats pipeline for a single season: rosters, match histories, game
+// segments, player stats. Works for both the active season and archived seasons.
+// For archived seasons the lineups API returns empty data, so schedule rows are
+// not created, but player stats and match scores are still computed from the
+// recap segment APIs.
+
+async function scrapeSeasonStats(
+  targetSeasonId: number,
+  leagueGuid: string,
+  debug: Record<string, unknown>
+): Promise<{ playersUpdated: number; matchesUpdated: number }> {
+
+  // ── A. Fetch schedule / lineups ─────────────────────────────────────────────
+  let matchList: DCMatch[] = [];
+  try {
+    const c = await getCSRFCookies();
+    const raw = await fetchLineups(targetSeasonId, c);
+    matchList = normalizeLineups(raw);
+    debug.matchListLength = matchList.length;
+  } catch (e) {
+    debug.lineupsError = e instanceof Error ? e.message : String(e);
+  }
+
+  // ── B. Fetch standings (team competitors) ───────────────────────────────────
+  type Competitor = Record<string, unknown>;
+  let teamCompetitors: Competitor[] = [];
+  try {
+    const props = await fetchStandingsPageProps(targetSeasonId);
+    teamCompetitors = (props.competitors ?? []) as Competitor[];
+    debug.teamsCount = teamCompetitors.length;
+    debug.competitorSample = teamCompetitors[0] ?? null;
+  } catch (e) {
+    debug.standingsError = e instanceof Error ? e.message : String(e);
+  }
+
+  // ── C. Fetch player rosters + match histories per team ──────────────────────
+  type PlayerWithTeam = DCPlayerStat & { _teamName: string };
+  const roster: PlayerWithTeam[] = [];
+  const seenPlayerIds = new Set<number>();
+  const matchMeta = new Map<string, { homeTeamId: string; awayTeamId: string; weekKey: string }>();
+
+  for (const team of teamCompetitors) {
+    const teamId = String(team.id);
+    const teamName = String(team.name ?? "");
+    try {
+      const c = await getCSRFCookies();
+      const res = await fetchPlayerStandings(targetSeasonId, { season_status: "REG", opponent_guid: teamId }, c);
+      for (const p of res.roster ?? []) {
+        const pid = (p as unknown as Record<string, unknown>).id as number;
+        if (!seenPlayerIds.has(pid)) {
+          seenPlayerIds.add(pid);
+          roster.push({ ...(p as DCPlayerStat), _teamName: teamName });
+        }
+      }
+      const c2 = await getCSRFCookies();
+      const history: DCMatchHistoryEntry[] = await fetchTeamMatchHistory(targetSeasonId, teamId, c2);
+      for (const entry of history) {
+        const guid = entry.match_id;
+        if (!guid) continue;
+        if (!matchMeta.has(guid)) {
+          matchMeta.set(guid, {
+            homeTeamId: entry.side === "Home" ? teamId : "__unknown__",
+            awayTeamId: entry.side === "Away" ? teamId : "__unknown__",
+            weekKey: entry.match_start_date ?? "",
+          });
+        } else {
+          const meta = matchMeta.get(guid)!;
+          if (meta.homeTeamId === "__unknown__") meta.homeTeamId = teamId;
+          if (meta.awayTeamId === "__unknown__") meta.awayTeamId = teamId;
+        }
+      }
+    } catch { /* non-fatal per team */ }
+  }
+
+  debug.rosterLength = roster.length;
+  debug.uniqueMatchGuids = matchMeta.size;
+
+  // ── D. Fetch game segments + per-match player stats ─────────────────────────
+  const guids = Array.from(matchMeta.keys());
+  const segmentsMap = new Map<string, DCGameLeg[][]>();
+  const matchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();
+
+  const segResults = await Promise.allSettled(
+    guids.map(async (guid) => {
+      const [sets, pStats] = await Promise.allSettled([
+        fetchGameSegments(guid),
+        fetchMatchPlayerStats(guid),
+      ]);
+      if (sets.status === "fulfilled") segmentsMap.set(guid, sets.value);
+      if (pStats.status === "fulfilled") matchPlayerStatsMap.set(guid, pStats.value);
+    })
+  );
+  debug.segmentsLoaded = segmentsMap.size;
+  debug.matchPlayerStatsLoaded = matchPlayerStatsMap.size;
+  debug.segmentsErrors = segResults.filter((r) => r.status === "rejected").length;
+
+  // ── E. Build player accumulators from segments ──────────────────────────────
+  const accumByName = new Map<string, PlayerAccum>();
+  for (const p of roster) {
+    const s = p as unknown as Record<string, unknown>;
+    const firstName = String(s.player_first_name ?? "").trim();
+    const lastName = String(s.player_last_name ?? "").trim();
+    const playerName = [firstName, lastName].filter(Boolean).join(" ");
+    if (!playerName) continue;
+    if (!accumByName.has(playerName)) {
+      accumByName.set(playerName, emptyAccum(
+        s.id != null ? String(s.id) : "",
+        playerName,
+        String(s._teamName ?? "")
+      ));
+    }
+  }
+
+  const sampleCricketScores: string[] = [];
+
+  for (const [guid, sets] of segmentsMap) {
+    const meta = matchMeta.get(guid);
+    if (!meta) continue;
+    const { homeTeamId, awayTeamId, weekKey } = meta;
+    const homeTeamName = String(teamCompetitors.find((t) => String(t.id) === homeTeamId)?.name ?? "");
+    const awayTeamName = String(teamCompetitors.find((t) => String(t.id) === awayTeamId)?.name ?? "");
+
+    for (const legs of sets) {
+      if (legs.length === 0) continue;
+      const type = gameType(legs[0].game_name ?? "");
+      const winner = setWinner(legs);
+
+      const homePlayers = new Set<string>();
+      const awayPlayers = new Set<string>();
+      for (const leg of legs) {
+        for (const turn of leg.turns ?? []) {
+          if (turn.home?.name) homePlayers.add(turn.home.name);
+          if (turn.away?.name) awayPlayers.add(turn.away.name);
+        }
+      }
+
+      function awardSet(
+        playerSet: Set<string>,
+        isWinner: boolean,
+        opponentPlayers: Set<string>,
+        opponentTeamName: string
+      ) {
+        for (const pname of playerSet) {
+          const acc = accumByName.get(pname);
+          if (!acc) continue;
+          acc.weeksPlayed.add(weekKey);
+          for (const oppName of opponentPlayers) acc.opponentNames.push(oppName);
+          if (!acc.weekStats.has(weekKey)) acc.weekStats.set(weekKey, emptyWeek(opponentTeamName));
+          const w = acc.weekStats.get(weekKey)!;
+          if (isWinner) {
+            acc.setWins++; w.setWins++;
+            if (type === "crkt") { acc.crktWins++;   w.crktWins++;   }
+            else if (type === "601") { acc.col601Wins++; w.col601Wins++; }
+            else if (type === "501") { acc.col501Wins++; w.col501Wins++; }
+          } else {
+            acc.setLosses++; w.setLosses++;
+            if (type === "crkt") { acc.crktLosses++;   w.crktLosses++;   }
+            else if (type === "601") { acc.col601Losses++; w.col601Losses++; }
+            else if (type === "501") { acc.col501Losses++; w.col501Losses++; }
+          }
+        }
+      }
+
+      awardSet(homePlayers, winner === 0, awayPlayers, awayTeamName);
+      awardSet(awayPlayers, winner === 1, homePlayers, homeTeamName);
+
+      for (const leg of legs) {
+        const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
+
+        for (const turn of leg.turns ?? []) {
+          for (const side of ["home", "away"] as const) {
+            const t = turn[side];
+            if (!t?.name) continue;
+            const acc = accumByName.get(t.name);
+            if (!acc) continue;
+            const is01 = type === "601" || type === "501";
+            const isCrkt = type === "crkt";
+            const score01 = is01 ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
+            const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
+
+            if (isCrkt && t.turn_score != null && sampleCricketScores.length < 20) {
+              const sc = String(t.turn_score);
+              if (!sampleCricketScores.includes(sc)) sampleCricketScores.push(sc);
+            }
+
+            const remaining = t.current_score;
+            const w = acc.weekStats.get(weekKey);
+
+            if (is01 && !is501Tiebreaker && score01 >= 100) {
+              acc.hundredPlus += score01;
+              acc.weekHundredPlus.set(weekKey, (acc.weekHundredPlus.get(weekKey) ?? 0) + score01);
+              if (w) w.hundredPlus += score01;
+            }
+            if (is01 && score01 === 180) { acc.oneEighty++; if (w) w.oneEighty++; }
+            if (is01 && remaining === 0 && score01 > 100) {
+              if (score01 > acc.hOut) acc.hOut = score01;
+              if (w && score01 > w.hOut) w.hOut = score01;
+            }
+            if (isCrkt && leg.set_game_number !== 3 && crktMarks >= 6) {
+              acc.cricketRnds += crktMarks;
+              if (w) w.rnds += crktMarks;
+            }
+            if (isCrkt && crktMarks === 9) { acc.ro9++; if (w) w.ro9++; }
+          }
+        }
+
+        if (type !== "crkt") {
+          for (const side of ["home", "away"] as const) {
+            const sideNames = side === "home" ? homePlayers : awayPlayers;
+            const pprStr = leg[side]?.ppr;
+            if (pprStr == null) continue;
+            const pprVal = parseFloat(String(pprStr));
+            if (isNaN(pprVal) || pprVal === 0) continue;
+            for (const pname of sideNames) {
+              const acc = accumByName.get(pname);
+              if (!acc) continue;
+              const w = acc.weekStats.get(weekKey);
+              if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
+              if (w && pprVal > w.ldg) w.ldg = pprVal;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ── F. Merge per-match player stats (MPR, PPR, season aggregates) ───────────
+  for (const [guid, playerMatchStats] of matchPlayerStatsMap) {
+    const meta = matchMeta.get(guid);
+    if (!meta) continue;
+    const weekKey = meta.weekKey;
+    for (const ps of playerMatchStats) {
+      const acc = accumByName.get(ps.name);
+      if (!acc) continue;
+      const w = acc.weekStats.get(weekKey);
+      if (w) {
+        if (ps.cricket_average && parseFloat(ps.cricket_average) > 0) w.mpr = ps.cricket_average;
+        const avgPpr = parseFloat(ps.average_01);
+        if (!isNaN(avgPpr) && avgPpr > 0) w.ppr = ps.average_01;
+      }
+      const pts01 = parseInt(String(ps.points_scored_01).replace(/,/g, ""), 10);
+      const dts01 = parseInt(String(ps.darts_thrown_01).replace(/,/g, ""), 10);
+      if (!isNaN(pts01) && !isNaN(dts01) && dts01 > 0) {
+        acc.zeroOnePointsTotal += pts01;
+        acc.zeroOneDartsTotal += dts01;
+      }
+      const marks = Number(ps.cricket_marks_scored);
+      const crktDarts = Number(ps.cricket_darts_thrown);
+      if (!isNaN(marks) && !isNaN(crktDarts) && crktDarts > 0) {
+        acc.crktMarksTotal += marks;
+        acc.crktDartsTotal += crktDarts;
+      }
+    }
+  }
+
+  // ── G. Compute per-player win% for SOS ──────────────────────────────────────
+  const playerWinPct = new Map<string, number>();
+  for (const [name, acc] of accumByName) {
+    const total = acc.setWins + acc.setLosses;
+    playerWinPct.set(name, total > 0 ? acc.setWins / total : 0);
+  }
+
+  // ── H. Upsert divisions + teams + matches from lineups ──────────────────────
+  // For archived seasons the lineups API returns empty, so this loop is a no-op.
+  let matchesUpdated = 0;
+  const divSerialIdByDcId = new Map<number, number>();
+  const dcTeamToSerialId = new Map<number, number>(); // DC team integer ID → serial PK
+
+  for (const m of matchList) {
+    let divSerialId: number | null = null;
+    if (m.division_id != null) {
+      if (divSerialIdByDcId.has(m.division_id)) {
+        divSerialId = divSerialIdByDcId.get(m.division_id)!;
+      } else {
+        const [divRow] = await db
+          .insert(divisions)
+          .values({ dcId: m.division_id, seasonId: targetSeasonId, name: m.division })
+          .onConflictDoUpdate({ target: [divisions.dcId, divisions.seasonId], set: { name: m.division } })
+          .returning({ id: divisions.id });
+        divSerialId = divRow?.id ?? null;
+        if (divSerialId != null) divSerialIdByDcId.set(m.division_id, divSerialId);
+      }
+    }
+
+    let homeSerialId: number | null = null;
+    let awaySerialId: number | null = null;
+
+    for (const [side, isHome] of [[m.left, true], [m.right, false]] as [typeof m.left, boolean][]) {
+      if (!side.id) continue;
+      const comp = teamCompetitors.find((c) => Number(c.id) === side.id);
+      const dcWins = comp?.win != null ? Number(comp.win) : null;
+      const dcLosses = comp?.loss != null ? Number(comp.loss) : null;
+      const dcLeaguePoints = comp?.league_points != null ? Number(comp.league_points) : null;
+      const [teamRow] = await db
+        .insert(teams)
+        .values({ dcId: side.id, seasonId: targetSeasonId, divisionId: divSerialId, name: side.team_name, captainName: side.captain_name ?? null, dcWins, dcLosses, dcLeaguePoints })
+        .onConflictDoUpdate({ target: [teams.dcId, teams.seasonId], set: { divisionId: divSerialId, name: side.team_name, captainName: side.captain_name ?? null, dcWins, dcLosses, dcLeaguePoints } })
+        .returning({ id: teams.id });
+      if (teamRow?.id) {
+        dcTeamToSerialId.set(side.id, teamRow.id);
+        if (isHome) homeSerialId = teamRow.id;
+        else awaySerialId = teamRow.id;
+      }
+    }
+
+    if (!m.id) { matchesUpdated++; continue; }
+
+    await db
+      .insert(matches)
+      .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: m.division, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, seasonStatus: m.season_status, prettyDate: m.pretty_date })
+      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, updatedAt: new Date() } });
+    matchesUpdated++;
+  }
+
+  // For archived seasons (empty lineups): look up existing team serial IDs from DB
+  // so the match score update step below has the DC→serial mapping it needs.
+  if (matchList.length === 0 && teamCompetitors.length > 0) {
+    const teamRows = await db
+      .select({ id: teams.id, dcId: teams.dcId })
+      .from(teams)
+      .where(eq(teams.seasonId, targetSeasonId));
+    for (const row of teamRows) dcTeamToSerialId.set(row.dcId, row.id);
+  }
+
+  // ── I. Update completed match scores from segment data ──────────────────────
+  // Uses serial team IDs (not DC IDs) to match the matches table's FK columns.
+  let matchScoresUpdated = 0;
+  for (const [guid, sets] of segmentsMap) {
+    const meta = matchMeta.get(guid);
+    if (!meta || meta.homeTeamId === "__unknown__" || meta.awayTeamId === "__unknown__") continue;
+    const homeSerialId = dcTeamToSerialId.get(parseInt(meta.homeTeamId));
+    const awaySerialId = dcTeamToSerialId.get(parseInt(meta.awayTeamId));
+    if (!homeSerialId || !awaySerialId) continue;
+
+    let homeSetWins = 0, awaySetWins = 0;
+    for (const legs of sets) {
+      if (legs.length === 0) continue;
+      const w = setWinner(legs);
+      if (w === 0) homeSetWins++;
+      else if (w === 1) awaySetWins++;
+    }
+    if (homeSetWins + awaySetWins === 0) continue;
+
+    await db
+      .update(matches)
+      .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", updatedAt: new Date() })
+      .where(and(
+        eq(matches.seasonId, targetSeasonId),
+        eq(matches.homeTeamId, homeSerialId),
+        eq(matches.awayTeamId, awaySerialId),
+      ));
+    matchScoresUpdated++;
+  }
+  debug.matchScoresUpdated = matchScoresUpdated;
+  debug.sampleCricketScores = sampleCricketScores;
+
+  // ── J. Fetch season MPR from leaderboard API ────────────────────────────────
+  const leaderboardMprByName = new Map<string, string>();
+  try {
+    const lbStats = await fetchLeaderboard(leagueGuid, targetSeasonId, "cricket", "doubles");
+    for (const row of lbStats) {
+      if (!row.darts_thrown || row.darts_thrown === 0) continue;
+      const mpr = (row.points_scored * 3) / row.darts_thrown;
+      const fullName = [row.first_name, row.last_name].filter(Boolean).join(" ");
+      if (fullName) leaderboardMprByName.set(fullName, mpr.toFixed(2));
+    }
+    debug.leaderboardMprCount = leaderboardMprByName.size;
+  } catch (e) {
+    debug.leaderboardMprError = e instanceof Error ? e.message : String(e);
+  }
+
+  // ── K. Upsert player stats + per-week stats ─────────────────────────────────
+  let playersUpdated = 0;
+
+  for (const p of roster) {
+    const s = p as unknown as Record<string, unknown>;
+    const firstName = String(s.player_first_name ?? "").trim();
+    const lastName  = String(s.player_last_name  ?? "").trim();
+    const playerName = [firstName, lastName].filter(Boolean).join(" ");
+    if (!playerName) continue;
+
+    const dcId = s.id != null ? String(s.id) : null;
+    const teamName = String(s._teamName ?? "");
+
+    const [player] = await db
+      .insert(players)
+      .values({ dcGuid: dcId, name: playerName })
+      .onConflictDoUpdate({ target: players.name, set: { dcGuid: dcId } })
+      .returning({ id: players.id });
+
+    const playerId = player.id;
+
+    const teamRows = await db
+      .select({ id: teams.id })
+      .from(teams)
+      .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.name, teamName)))
+      .limit(1);
+    const teamId = teamRows[0]?.id ?? null;
+
+    const acc = accumByName.get(playerName);
+    const setWins_   = acc?.setWins   ?? 0;
+    const setLosses_ = acc?.setLosses ?? 0;
+    const setTotal   = setWins_ + setLosses_;
+    const avgPct     = setTotal > 0 ? setWins_ / setTotal : null;
+    const wp         = acc ? String(acc.weeksPlayed.size) : null;
+    const crkt  = acc && (acc.crktWins + acc.crktLosses) > 0 ? `${acc.crktWins}-${acc.crktLosses}` : null;
+    const col601 = acc && (acc.col601Wins + acc.col601Losses) > 0 ? `${acc.col601Wins}-${acc.col601Losses}` : null;
+    const col501 = acc && (acc.col501Wins + acc.col501Losses) > 0 ? `${acc.col501Wins}-${acc.col501Losses}` : null;
+
+    let sos: string | null = null;
+    if (acc && acc.opponentNames.length > 0) {
+      const pctSum = acc.opponentNames.reduce(
+        (sum: number, oppName: string) => sum + (playerWinPct.get(oppName) ?? 0), 0
+      );
+      sos = (pctSum / acc.opponentNames.length).toFixed(3);
+    }
+
+    let zeroOneHh = 0;
+    if (acc) {
+      for (const weekTotal of acc.weekHundredPlus.values()) {
+        if (weekTotal > 450 && weekTotal > zeroOneHh) zeroOneHh = weekTotal;
+      }
+    }
+
+    const pos = (s.player_rank ?? null) as number | null;
+
+    const vals = {
+      seasonId: targetSeasonId,
+      playerId,
+      teamId,
+      teamName,
+      pos,
+      wp,
+      crkt,
+      col601,
+      col501,
+      sos,
+      hundredPlus: acc?.hundredPlus  ?? 0,
+      rnds:        acc?.cricketRnds  ?? 0,
+      oneEighty:   acc?.oneEighty    ?? 0,
+      roHh:        0,
+      zeroOneHh,
+      ro9:         acc?.ro9          ?? 0,
+      hOut:        acc?.hOut         ?? 0,
+      ldg:         acc ? Math.round(acc.maxSetAvg) : 0,
+      ro6b:        0,
+      mpr: leaderboardMprByName.get(playerName) ??
+        (acc && acc.crktDartsTotal > 0
+          ? ((acc.crktMarksTotal * 3) / acc.crktDartsTotal).toFixed(2)
+          : null),
+      ppr: acc && acc.zeroOneDartsTotal > 0
+        ? (acc.zeroOnePointsTotal * 3 / acc.zeroOneDartsTotal).toFixed(2)
+        : null,
+      avg:  avgPct != null ? String(avgPct.toFixed(3)) : null,
+      pts:  setWins_,
+      updatedAt: new Date(),
+    };
+
+    await db
+      .insert(playerStats)
+      .values(vals)
+      .onConflictDoUpdate({ target: [playerStats.seasonId, playerStats.playerId], set: { ...vals } });
+
+    if (acc) {
+      for (const [wk, w] of acc.weekStats) {
+        const weekVals = {
+          seasonId: targetSeasonId,
+          playerId,
+          weekKey: wk,
+          opponentTeam: w.opponentTeam,
+          setWins: w.setWins,
+          setLosses: w.setLosses,
+          crktWins: w.crktWins,
+          crktLosses: w.crktLosses,
+          col601Wins: w.col601Wins,
+          col601Losses: w.col601Losses,
+          col501Wins: w.col501Wins,
+          col501Losses: w.col501Losses,
+          hundredPlus: w.hundredPlus,
+          oneEighty: w.oneEighty,
+          ro9: w.ro9,
+          hOut: w.hOut,
+          ldg: Math.round(w.ldg),
+          rnds: w.rnds,
+          mpr: w.mpr,
+          ppr: w.ppr,
+        };
+        await db
+          .insert(playerWeekStats)
+          .values(weekVals)
+          .onConflictDoUpdate({
+            target: [playerWeekStats.seasonId, playerWeekStats.playerId, playerWeekStats.weekKey],
+            set: weekVals,
+          });
+      }
+    }
+    playersUpdated++;
+  }
+
+  // Update lastScrapedAt for this season
+  await db.update(seasons).set({ lastScrapedAt: new Date() }).where(eq(seasons.id, targetSeasonId));
+
+  return { playersUpdated, matchesUpdated };
+}
+
+// ── POST handler ──────────────────────────────────────────────────────────────
+//
+// Accepted body fields (all optional):
+//   seasonId?: number   — fully scrape one specific season
+//   all?: boolean       — fully scrape all seasons (active + archived)
+//   force?: boolean     — with all:true, re-scrape seasons even if lastScrapedAt is set
+//
+// Default (no body): refresh the active season only.
+
 export async function POST(req: NextRequest) {
-  // ── Auth ──────────────────────────────────────────────────────────────────
   const secret = process.env.SCRAPE_SECRET;
   const authHeader = req.headers.get("authorization");
   if (secret && authHeader !== `Bearer ${secret}`) {
@@ -156,387 +733,26 @@ export async function POST(req: NextRequest) {
   }
 
   const triggeredBy = req.headers.get("x-triggered-by") ?? "manual";
+  const body = await req.json().catch(() => ({})) as {
+    seasonId?: number;
+    all?: boolean;
+    force?: boolean;
+  };
   const debug: Record<string, unknown> = {};
 
   try {
-    // ── 1. Fetch season list ────────────────────────────────────────────────
+    // 1. Fetch league page props
     const pageProps = await fetchLeaguePageProps();
-    const allSeasons = [
-      ...pageProps.activeSeasons,
-      ...pageProps.archivedSeasons,
-    ];
+    const leagueGuid = pageProps.leagueInfo.guid;
+    const allSeasonsList = [...pageProps.activeSeasons, ...pageProps.archivedSeasons];
+    const activeSeason = pageProps.activeSeasons[0];
 
-    if (allSeasons.length === 0) {
+    if (allSeasonsList.length === 0) {
       return NextResponse.json({ error: "No seasons found" }, { status: 500 });
     }
 
-    const activeSeason = pageProps.activeSeasons[0];
-    if (!activeSeason) {
-      return NextResponse.json({ ok: true, message: "No active season" });
-    }
-
-    const seasonId = activeSeason.id;
-
-    // ── 2. Fetch schedule / lineups ─────────────────────────────────────────
-    let matchList: DCMatch[] = [];
-    try {
-      const c1 = await getCSRFCookies();
-      const raw = await fetchLineups(seasonId, c1);
-      matchList = normalizeLineups(raw);
-      debug.matchListLength = matchList.length;
-    } catch (e) {
-      debug.lineupsError = e instanceof Error ? e.message : String(e);
-    }
-
-    // ── 3. Fetch team standings list (for team IDs) ─────────────────────────
-    type Competitor = Record<string, unknown>;
-    let teamCompetitors: Competitor[] = [];
-
-    try {
-      const standingsProps = await fetchStandingsPageProps(seasonId);
-      teamCompetitors = (standingsProps.competitors ?? []) as Competitor[];
-      debug.teamsCount = teamCompetitors.length;
-      // Log sample so we can see what fields are available (wins, losses, pts, etc.)
-      debug.competitorSample = teamCompetitors[0] ?? null;
-    } catch (e) {
-      debug.standingsError = e instanceof Error ? e.message : String(e);
-    }
-
-    // ── 4. Fetch player rosters + match histories per team ──────────────────
-    type PlayerWithTeam = DCPlayerStat & { _teamName: string };
-    const roster: PlayerWithTeam[] = [];
-    const seenPlayerIds = new Set<number>();
-
-    // matchGuid → { homeTeamId, awayTeamId, weekKey }
-    const matchMeta: Map<string, { homeTeamId: string; awayTeamId: string; weekKey: string }> = new Map();
-    // teamId → set of match GUIDs
-    const teamMatches: Map<string, Set<string>> = new Map();
-
-    for (const team of teamCompetitors) {
-      const teamId = String(team.id);
-      const teamName = String(team.name ?? "");
-      teamMatches.set(teamId, new Set());
-
-      try {
-        const c = await getCSRFCookies();
-
-        // Player roster
-        const res = await fetchPlayerStandings(
-          seasonId,
-          { season_status: "REG", opponent_guid: teamId },
-          c
-        );
-        for (const p of res.roster ?? []) {
-          const pid = (p as unknown as Record<string, unknown>).id as number;
-          if (!seenPlayerIds.has(pid)) {
-            seenPlayerIds.add(pid);
-            roster.push({ ...(p as DCPlayerStat), _teamName: teamName });
-          }
-        }
-
-        // Match history
-        const c2 = await getCSRFCookies();
-        const history: DCMatchHistoryEntry[] = await fetchTeamMatchHistory(seasonId, teamId, c2);
-        for (const entry of history) {
-          const guid = entry.match_id;
-          if (!guid) continue;
-          teamMatches.get(teamId)!.add(guid);
-          if (!matchMeta.has(guid)) {
-            // first time we see this match — side tells us home/away
-            const weekKey = entry.match_start_date ?? "";
-            matchMeta.set(guid, {
-              homeTeamId: entry.side === "Home" ? teamId : "__unknown__",
-              awayTeamId: entry.side === "Away" ? teamId : "__unknown__",
-              weekKey,
-            });
-          } else {
-            // second team — fill in the missing side
-            const meta = matchMeta.get(guid)!;
-            if (meta.homeTeamId === "__unknown__") meta.homeTeamId = teamId;
-            if (meta.awayTeamId === "__unknown__") meta.awayTeamId = teamId;
-          }
-        }
-      } catch { /* non-fatal */ }
-    }
-
-    debug.rosterLength = roster.length;
-    debug.uniqueMatchGuids = matchMeta.size;
-
-    // ── 5. Fetch game segments for all unique matches ───────────────────────
-    const guids = Array.from(matchMeta.keys());
-    // segments keyed by GUID
-    const segmentsMap: Map<string, DCGameLeg[][]> = new Map();
-
-    // Fetch game segments AND per-player match stats in parallel
-    const matchPlayerStatsMap: Map<string, DCMatchPlayerStat[]> = new Map();
-
-    const segResults = await Promise.allSettled(
-      guids.map(async (guid) => {
-        const [sets, playerStats] = await Promise.allSettled([
-          fetchGameSegments(guid),
-          fetchMatchPlayerStats(guid),
-        ]);
-        if (sets.status === "fulfilled") segmentsMap.set(guid, sets.value);
-        if (playerStats.status === "fulfilled") matchPlayerStatsMap.set(guid, playerStats.value);
-      })
-    );
-    const segErrors = segResults.filter((r) => r.status === "rejected").length;
-    debug.segmentsLoaded = segmentsMap.size;
-    debug.matchPlayerStatsLoaded = matchPlayerStatsMap.size;
-    debug.segmentsErrors = segErrors;
-
-    // ── 6. Build player accumulators from segments ──────────────────────────
-    // We need a name→accum map; we identify players in turns by name string.
-    // roster gives us canonical (dcId, name, teamName) tuples.
-
-    // Build name→accum. If duplicate names exist on different teams, we key by "name|teamName".
-    const accumByName = new Map<string, PlayerAccum>();
-    for (const p of roster) {
-      const s = p as unknown as Record<string, unknown>;
-      const firstName = String(s.player_first_name ?? "").trim();
-      const lastName = String(s.player_last_name ?? "").trim();
-      const playerName = [firstName, lastName].filter(Boolean).join(" ");
-      if (!playerName) continue;
-      const dcId = s.id != null ? String(s.id) : "";
-      const teamName = String(s._teamName ?? "");
-      if (!accumByName.has(playerName)) {
-        accumByName.set(playerName, emptyAccum(dcId, playerName, teamName));
-      }
-    }
-
-    // Collect a sample of cricket turn_score values for debug inspection
-    const sampleCricketScores: string[] = [];
-
-    for (const [guid, sets] of segmentsMap) {
-      const meta = matchMeta.get(guid);
-      if (!meta) continue;
-      const { homeTeamId, awayTeamId, weekKey } = meta;
-      const homeTeamName = String(teamCompetitors.find((t) => String(t.id) === homeTeamId)?.name ?? "");
-      const awayTeamName = String(teamCompetitors.find((t) => String(t.id) === awayTeamId)?.name ?? "");
-
-      for (const legs of sets) {
-        if (legs.length === 0) continue;
-        const type = gameType(legs[0].game_name ?? "");
-        const winner = setWinner(legs);
-
-        // Collect all player names on each side across all legs of this set
-        const homePlayers = new Set<string>();
-        const awayPlayers = new Set<string>();
-        for (const leg of legs) {
-          for (const turn of leg.turns ?? []) {
-            if (turn.home?.name) homePlayers.add(turn.home.name);
-            if (turn.away?.name) awayPlayers.add(turn.away.name);
-          }
-        }
-
-        // Award set W/L; track individual opponent names (SOS) and init WeekAccum
-        function awardSet(
-          playerSet: Set<string>,
-          isWinner: boolean,
-          opponentPlayers: Set<string>,
-          opponentTeamName: string
-        ) {
-          for (const pname of playerSet) {
-            const acc = accumByName.get(pname);
-            if (!acc) continue;
-            acc.weeksPlayed.add(weekKey);
-            for (const oppName of opponentPlayers) {
-              acc.opponentNames.push(oppName);
-            }
-            // Init week entry on first set of the week for this player
-            if (!acc.weekStats.has(weekKey)) {
-              acc.weekStats.set(weekKey, emptyWeek(opponentTeamName));
-            }
-            const w = acc.weekStats.get(weekKey)!;
-            if (isWinner) {
-              acc.setWins++; w.setWins++;
-              if (type === "crkt") { acc.crktWins++;   w.crktWins++;   }
-              else if (type === "601") { acc.col601Wins++; w.col601Wins++; }
-              else if (type === "501") { acc.col501Wins++; w.col501Wins++; }
-            } else {
-              acc.setLosses++; w.setLosses++;
-              if (type === "crkt") { acc.crktLosses++;   w.crktLosses++;   }
-              else if (type === "601") { acc.col601Losses++; w.col601Losses++; }
-              else if (type === "501") { acc.col501Losses++; w.col501Losses++; }
-            }
-          }
-        }
-
-        const homeWon = winner === 0;
-        awardSet(homePlayers, homeWon, awayPlayers, awayTeamName);
-        awardSet(awayPlayers, !homeWon, homePlayers, homeTeamName);
-
-        // Process turn-level stats
-        for (const leg of legs) {
-          // Tiebreaker only applies to 501 (best-of-3); 601 is single-leg, cricket leg 3 counts
-          const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
-
-          for (const turn of leg.turns ?? []) {
-            for (const side of ["home", "away"] as const) {
-              const t = turn[side];
-              if (!t?.name) continue;
-              const acc = accumByName.get(t.name);
-              if (!acc) continue;
-
-              const is01 = type === "601" || type === "501";
-              const isCrkt = type === "crkt";
-              // For 01 games turn_score is numeric; for cricket it's a notation string
-              const score01 = is01 ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
-              const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
-
-              // Sample cricket notations for debug (first 20 distinct non-null values)
-              if (isCrkt && t.turn_score != null && sampleCricketScores.length < 20) {
-                const s = String(t.turn_score);
-                if (!sampleCricketScores.includes(s)) sampleCricketScores.push(s);
-              }
-              const remaining = t.current_score;
-
-              const w = acc.weekStats.get(weekKey);
-
-              // 100+: 601 single leg + 501 legs 1&2 only (no 501 tiebreaker)
-              if (is01 && !is501Tiebreaker && score01 >= 100) {
-                acc.hundredPlus += score01;
-                const cur = acc.weekHundredPlus.get(weekKey) ?? 0;
-                acc.weekHundredPlus.set(weekKey, cur + score01);
-                if (w) w.hundredPlus += score01;
-              }
-
-              // 180
-              if (is01 && score01 === 180) {
-                acc.oneEighty++;
-                if (w) w.oneEighty++;
-              }
-
-              // H Out: finishing throw (remaining hits 0) >100 in 01 games
-              if (is01 && remaining === 0 && score01 > 100) {
-                if (score01 > acc.hOut) acc.hOut = score01;
-                if (w && score01 > w.hOut) w.hOut = score01;
-              }
-
-              // RNDS: sum of marks from cricket turns that scored >= 6 marks, legs 1+2 only
-              if (isCrkt && leg.set_game_number !== 3 && crktMarks >= 6) {
-                acc.cricketRnds += crktMarks;
-                if (w) w.rnds += crktMarks;
-              }
-
-              // RO9: cricket 9-mark turn
-              if (isCrkt && crktMarks === 9) {
-                acc.ro9++;
-                if (w) w.ro9++;
-              }
-            }
-          }
-
-          // LDG: track max single-leg 01 PPR (from leg[side].ppr) for 01 legs only.
-          // MPR and season PPR come from the leaderboard / recap/players APIs instead.
-          if (type !== "crkt") {
-            for (const side of ["home", "away"] as const) {
-              const sideNames = side === "home" ? homePlayers : awayPlayers;
-              const pprStr = leg[side]?.ppr;
-              if (pprStr == null) continue;
-              const pprVal = parseFloat(String(pprStr));
-              if (isNaN(pprVal) || pprVal === 0) continue;
-              for (const pname of sideNames) {
-                const acc = accumByName.get(pname);
-                if (!acc) continue;
-                const w = acc.weekStats.get(weekKey);
-                if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
-                if (w && pprVal > w.ldg) w.ldg = pprVal;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // ── 6.5. Merge per-match player stats (MPR, PPR, season PPR aggregation) ──
-    // recap.dartconnect.com/players/{guid} gives authoritative per-player stats
-    // for each match: cricket_average (MPR), average_01 (PPR), points_scored_01,
-    // darts_thrown_01. Use these instead of computing from turn notation.
-
-    for (const [guid, playerMatchStats] of matchPlayerStatsMap) {
-      const meta = matchMeta.get(guid);
-      if (!meta) continue;
-      const weekKey = meta.weekKey;
-
-      for (const ps of playerMatchStats) {
-        const acc = accumByName.get(ps.name);
-        if (!acc) continue;
-
-        // Week MPR / PPR — set directly on the week accumulator
-        const w = acc.weekStats.get(weekKey);
-        if (w) {
-          if (ps.cricket_average && parseFloat(ps.cricket_average) > 0) {
-            w.mpr = ps.cricket_average;
-          }
-          const avgPpr = parseFloat(ps.average_01);
-          if (!isNaN(avgPpr) && avgPpr > 0) {
-            w.ppr = ps.average_01;
-          }
-        }
-
-        // Season PPR: accumulate raw points+darts so we can compute the true
-        // weighted average at upsert time (PPR = total_points * 3 / total_darts)
-        const pts01 = parseInt(String(ps.points_scored_01).replace(/,/g, ""), 10);
-        const dts01 = parseInt(String(ps.darts_thrown_01).replace(/,/g, ""), 10);
-        if (!isNaN(pts01) && !isNaN(dts01) && dts01 > 0) {
-          acc.zeroOnePointsTotal += pts01;
-          acc.zeroOneDartsTotal += dts01;
-        }
-
-        // Season cricket totals for MPR fallback (leaderboard API may exclude low-game players)
-        const marks = Number(ps.cricket_marks_scored);
-        const crktDarts = Number(ps.cricket_darts_thrown);
-        if (!isNaN(marks) && !isNaN(crktDarts) && crktDarts > 0) {
-          acc.crktMarksTotal += marks;
-          acc.crktDartsTotal += crktDarts;
-        }
-      }
-    }
-
-    // ── 6.6. Update completed match scores from segment data ─────────────────
-    // Compute home/away set-win counts from segments already in memory.
-
-    let matchScoresUpdated = 0;
-
-    for (const [guid, sets] of segmentsMap) {
-      const meta = matchMeta.get(guid);
-      if (!meta) continue;
-      if (meta.homeTeamId === "__unknown__" || meta.awayTeamId === "__unknown__") continue;
-      const homeTeamIdNum = parseInt(meta.homeTeamId);
-      const awayTeamIdNum = parseInt(meta.awayTeamId);
-      if (isNaN(homeTeamIdNum) || isNaN(awayTeamIdNum)) continue;
-
-      let homeSetWins = 0, awaySetWins = 0;
-      for (const legs of sets) {
-        if (legs.length === 0) continue;
-        const w = setWinner(legs);
-        if (w === 0) homeSetWins++;
-        else if (w === 1) awaySetWins++;
-      }
-      if (homeSetWins + awaySetWins === 0) continue;
-
-      await db
-        .update(matches)
-        .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", updatedAt: new Date() })
-        .where(and(
-          eq(matches.seasonId, seasonId),
-          eq(matches.homeTeamId, homeTeamIdNum),
-          eq(matches.awayTeamId, awayTeamIdNum),
-        ));
-      matchScoresUpdated++;
-    }
-    debug.matchScoresUpdated = matchScoresUpdated;
-
-    // ── 7. Compute per-player win% for SOS ──────────────────────────────────
-    const playerWinPct = new Map<string, number>();
-    for (const [name, acc] of accumByName) {
-      const total = acc.setWins + acc.setLosses;
-      playerWinPct.set(name, total > 0 ? acc.setWins / total : 0);
-    }
-
-    // ── 8. Upsert seasons ───────────────────────────────────────────────────
-    for (const s of allSeasons) {
+    // 2. Upsert all known seasons
+    for (const s of allSeasonsList) {
       await db
         .insert(seasons)
         .values({
@@ -555,301 +771,67 @@ export async function POST(req: NextRequest) {
         });
     }
 
-    // ── 9. Upsert divisions + teams + matches ───────────────────────────────
-    let matchesUpdated = 0;
+    // 3. Always backfill archived season metadata (divisions/teams/W-L from standings).
+    //    Fast and idempotent — keeps the standings page and division filter working
+    //    for all historical seasons even when no full stats scrape has been run.
+    await backfillArchivedMetadata(pageProps.archivedSeasons, debug);
 
-    for (const m of matchList) {
-      if (m.division_id) {
-        await db
-          .insert(divisions)
-          .values({ id: m.division_id, seasonId, name: m.division })
-          .onConflictDoUpdate({
-            target: divisions.id,
-            set: { name: m.division },
-          });
+    // 4. Determine which seasons to fully scrape
+    let seasonsToScrape: DCSeason[] = [];
+
+    if (body.all) {
+      if (body.force) {
+        seasonsToScrape = allSeasonsList;
+      } else {
+        const dbRows = await db.select({ id: seasons.id, lastScrapedAt: seasons.lastScrapedAt }).from(seasons);
+        const lastScrapedById = new Map(dbRows.map((r) => [r.id, r.lastScrapedAt]));
+        seasonsToScrape = allSeasonsList.filter((s) => !lastScrapedById.get(s.id));
       }
-
-      for (const side of [m.left, m.right]) {
-        // Merge in DartConnect standings fields from competitorSample data
-        const comp = teamCompetitors.find((c) => Number(c.id) === side.id);
-        const dcWins   = comp?.win   != null ? Number(comp.win)   : null;
-        const dcLosses = comp?.loss  != null ? Number(comp.loss)  : null;
-        const dcLeaguePoints = comp?.league_points != null ? Number(comp.league_points) : null;
-
-        await db
-          .insert(teams)
-          .values({
-            id: side.id,
-            seasonId,
-            divisionId: m.division_id ?? null,
-            name: side.team_name,
-            captainName: side.captain_name ?? null,
-            dcWins,
-            dcLosses,
-            dcLeaguePoints,
-          })
-          .onConflictDoUpdate({
-            target: teams.id,
-            set: {
-              name: side.team_name,
-              captainName: side.captain_name ?? null,
-              dcWins,
-              dcLosses,
-              dcLeaguePoints,
-            },
-          });
-      }
-
-      await db
-        .insert(matches)
-        .values({
-          id: m.id,
-          seasonId,
-          divisionId: m.division_id ?? null,
-          divisionName: m.division,
-          roundSeq: m.round_seq,
-          homeTeamId: m.left.id,
-          awayTeamId: m.right.id,
-          homeTeamName: m.left.team_name,
-          awayTeamName: m.right.team_name,
-          schedDate: m.sched_date,
-          schedTime: m.sched_time,
-          status: m.status,
-          homeScore: m.home_score ?? 0,
-          awayScore: m.away_score ?? 0,
-          dcMatchId: m.dc_match_id ?? null,
-          seasonStatus: m.season_status,
-          prettyDate: m.pretty_date,
-        })
-        .onConflictDoUpdate({
-          target: matches.id,
-          set: {
-            status: m.status,
-            homeScore: m.home_score ?? 0,
-            awayScore: m.away_score ?? 0,
-            dcMatchId: m.dc_match_id ?? null,
-            updatedAt: new Date(),
-          },
-        });
-
-      matchesUpdated++;
+    } else if (body.seasonId) {
+      const found = allSeasonsList.find((s) => s.id === body.seasonId);
+      if (!found) return NextResponse.json({ error: `Season ${body.seasonId} not found` }, { status: 404 });
+      seasonsToScrape = [found];
+    } else {
+      // Default: active season only
+      if (!activeSeason) return NextResponse.json({ ok: true, message: "No active season" });
+      seasonsToScrape = [activeSeason];
     }
 
-    // ── 10. Fetch season MPR from leaderboard API (cricket doubles) ─────────────
-    // leaderboard.dartconnect.com/getLeaderboard returns per-player season totals:
-    //   points_scored = total cricket marks, darts_thrown = total darts thrown
-    //   MPR = points_scored * 3 / darts_thrown  (matches DartConnect's displayed formula)
-    //   Note: winning rounds may use fewer than 3 darts, so marks/rounds < marks*3/darts
-    // This is the authoritative source — avoids the per-leg computation issues.
-    const leaderboardMprByName = new Map<string, string>();
-    try {
-      const lbStats = await fetchLeaderboard("29qj", seasonId, "cricket", "doubles");
-      for (const row of lbStats) {
-        if (!row.darts_thrown || row.darts_thrown === 0) continue;
-        const mpr = (row.points_scored * 3) / row.darts_thrown;
-        const fullName = [row.first_name, row.last_name].filter(Boolean).join(" ");
-        if (fullName) leaderboardMprByName.set(fullName, mpr.toFixed(2));
+    // 5. Run the full stats pipeline for each target season
+    let totalPlayersUpdated = 0;
+    let totalMatchesUpdated = 0;
+    const seasonResults: Record<string, unknown> = {};
+
+    for (const s of seasonsToScrape) {
+      const seasonDebug: Record<string, unknown> = {};
+      try {
+        const result = await scrapeSeasonStats(s.id, leagueGuid, seasonDebug);
+        totalPlayersUpdated += result.playersUpdated;
+        totalMatchesUpdated += result.matchesUpdated;
+        seasonResults[`${s.id}_${s.season}`] = { ok: true, ...result };
+      } catch (e) {
+        seasonResults[`${s.id}_${s.season}`] = {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+          debug: seasonDebug,
+        };
       }
-      debug.leaderboardMprCount = leaderboardMprByName.size;
-    } catch (e) {
-      debug.leaderboardMprError = e instanceof Error ? e.message : String(e);
     }
-    debug.sampleCricketScores = sampleCricketScores;
-
-    // ── 11. Upsert player stats ─────────────────────────────────────────────
-    let playersUpdated = 0;
-
-    for (const p of roster) {
-      const s = p as unknown as Record<string, unknown>;
-      const firstName  = String(s.player_first_name ?? "").trim();
-      const lastName   = String(s.player_last_name  ?? "").trim();
-      const playerName = [firstName, lastName].filter(Boolean).join(" ");
-      if (!playerName) continue;
-
-      const dcId = s.id != null ? String(s.id) : null;
-      const teamName = String(s._teamName ?? "");
-
-      const [player] = await db
-        .insert(players)
-        .values({ dcGuid: dcId, name: playerName })
-        .onConflictDoUpdate({
-          target: players.name,
-          set: { dcGuid: dcId },
-        })
-        .returning({ id: players.id });
-
-      const playerId = player.id;
-
-      const teamRows = await db
-        .select({ id: teams.id })
-        .from(teams)
-        .where(and(eq(teams.seasonId, seasonId), eq(teams.name, teamName)))
-        .limit(1);
-
-      const teamId = teamRows[0]?.id ?? null;
-
-      // Pull from segment-based accumulator (falls back to zeros if no games yet)
-      const acc = accumByName.get(playerName);
-
-      const setWins   = acc?.setWins   ?? 0;
-      const setLosses = acc?.setLosses ?? 0;
-      const setTotal  = setWins + setLosses;
-
-      // AVG = set win percentage
-      const avgPct = setTotal > 0 ? setWins / setTotal : null;
-
-      // WP = weeks played count
-      const wp = acc ? String(acc.weeksPlayed.size) : null;
-
-      // Set records
-      const crkt = acc && (acc.crktWins + acc.crktLosses) > 0
-        ? `${acc.crktWins}-${acc.crktLosses}` : null;
-      const col601 = acc && (acc.col601Wins + acc.col601Losses) > 0
-        ? `${acc.col601Wins}-${acc.col601Losses}` : null;
-      const col501 = acc && (acc.col501Wins + acc.col501Losses) > 0
-        ? `${acc.col501Wins}-${acc.col501Losses}` : null;
-
-      // SOS: average win% of the individual players you faced
-      let sos: string | null = null;
-      if (acc && acc.opponentNames.length > 0) {
-        const pctSum = acc.opponentNames.reduce(
-          (sum: number, oppName: string) => sum + (playerWinPct.get(oppName) ?? 0),
-          0
-        );
-        sos = (pctSum / acc.opponentNames.length).toFixed(3);
-      }
-
-      // 01 HH: max weekly 100+ total >450
-      let zeroOneHh = 0;
-      if (acc) {
-        for (const weekTotal of acc.weekHundredPlus.values()) {
-          if (weekTotal > 450 && weekTotal > zeroOneHh) zeroOneHh = weekTotal;
-        }
-      }
-
-      // pos: use player_rank from API (positional within the standings call)
-      const pos = (s.player_rank ?? null) as number | null;
-
-      const vals = {
-        seasonId,
-        playerId,
-        teamId,
-        teamName,
-        pos,
-        wp,
-        crkt,
-        col601,
-        col501,
-        sos,
-        hundredPlus: acc?.hundredPlus     ?? 0,
-        rnds:        acc?.cricketRnds      ?? 0,
-        oneEighty:   acc?.oneEighty       ?? 0,
-        roHh:        0,  // not computed
-        zeroOneHh,
-        ro9:         acc?.ro9             ?? 0,
-        hOut:        acc?.hOut            ?? 0,
-        ldg:         acc ? Math.round(acc.maxSetAvg) : 0,
-        ro6b:        0,  // not computed
-        // MPR: from leaderboard API (marks * 3 / darts). Falls back to accumulated
-        // cricket totals from recap/players for players absent from the leaderboard
-        // (e.g. below minimum-game threshold).
-        mpr:         leaderboardMprByName.get(playerName) ??
-          (acc && acc.crktDartsTotal > 0
-            ? ((acc.crktMarksTotal * 3) / acc.crktDartsTotal).toFixed(2)
-            : null),
-        // PPR (3DA): aggregated from recap/players across all matches this season.
-        // points_scored_01 * 3 / darts_thrown_01 = true weighted season average.
-        ppr:         acc && acc.zeroOneDartsTotal > 0
-          ? (acc.zeroOnePointsTotal * 3 / acc.zeroOneDartsTotal).toFixed(2)
-          : null,
-        avg:         avgPct != null ? String(avgPct.toFixed(3)) : null,
-        pts:         setWins,
-        updatedAt:   new Date(),
-      };
-
-      await db
-        .insert(playerStats)
-        .values(vals)
-        .onConflictDoUpdate({
-          target: [playerStats.seasonId, playerStats.playerId],
-          set: { ...vals },
-        });
-
-      // Upsert per-week rows for this player
-      if (acc) {
-        for (const [wk, w] of acc.weekStats) {
-          await db
-            .insert(playerWeekStats)
-            .values({
-              seasonId,
-              playerId,
-              weekKey: wk,
-              opponentTeam: w.opponentTeam,
-              setWins: w.setWins,
-              setLosses: w.setLosses,
-              crktWins: w.crktWins,
-              crktLosses: w.crktLosses,
-              col601Wins: w.col601Wins,
-              col601Losses: w.col601Losses,
-              col501Wins: w.col501Wins,
-              col501Losses: w.col501Losses,
-              hundredPlus: w.hundredPlus,
-              oneEighty: w.oneEighty,
-              ro9: w.ro9,
-              hOut: w.hOut,
-              ldg: Math.round(w.ldg),
-              rnds: w.rnds,
-              mpr: w.mpr,
-              ppr: w.ppr,
-            })
-            .onConflictDoUpdate({
-              target: [playerWeekStats.seasonId, playerWeekStats.playerId, playerWeekStats.weekKey],
-              set: {
-                opponentTeam: w.opponentTeam,
-                setWins: w.setWins,
-                setLosses: w.setLosses,
-                crktWins: w.crktWins,
-                crktLosses: w.crktLosses,
-                col601Wins: w.col601Wins,
-                col601Losses: w.col601Losses,
-                col501Wins: w.col501Wins,
-                col501Losses: w.col501Losses,
-                hundredPlus: w.hundredPlus,
-                oneEighty: w.oneEighty,
-                ro9: w.ro9,
-                hOut: w.hOut,
-                ldg: Math.round(w.ldg),
-                rnds: w.rnds,
-                mpr: w.mpr,
-                ppr: w.ppr,
-              },
-            });
-        }
-      }
-
-      playersUpdated++;
-    }
-
-    // ── 11. Update last_scraped_at ──────────────────────────────────────────
-    await db
-      .update(seasons)
-      .set({ lastScrapedAt: new Date() })
-      .where(eq(seasons.id, seasonId));
+    debug.seasonResults = seasonResults;
 
     await db.insert(scrapeLog).values({
-      seasonId,
+      seasonId: activeSeason?.id,
       triggeredBy,
       status: "success",
-      playersUpdated,
-      matchesUpdated,
+      playersUpdated: totalPlayersUpdated,
+      matchesUpdated: totalMatchesUpdated,
     });
 
     return NextResponse.json({
       ok: true,
-      seasonId,
-      seasonName: activeSeason.season,
-      playersUpdated,
-      matchesUpdated,
+      seasonsScraped: seasonsToScrape.length,
+      playersUpdated: totalPlayersUpdated,
+      matchesUpdated: totalMatchesUpdated,
       debug,
     });
 

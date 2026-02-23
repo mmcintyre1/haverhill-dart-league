@@ -21,7 +21,7 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
 }
 
 async function getStandings(seasonId: number, divisionFilter: string | null) {
-  const [allTeams, allMatches] = await Promise.all([
+  const [allTeams, allMatches, allDivisions] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
       .select()
@@ -32,7 +32,11 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
           or(eq(matches.status, "C"), gt(matches.homeScore!, 0), gt(matches.awayScore!, 0))
         )
       ),
+    db.select().from(divisions).where(eq(divisions.seasonId, seasonId)),
   ]);
+
+  // Fallback map: division serial ID → name (used when no match data exists, e.g. archived seasons)
+  const divNameById = new Map(allDivisions.map((d) => [d.id, d.name]));
 
   // Build standings per team — prefer DartConnect-authoritative fields when available
   const stats = new Map<
@@ -77,14 +81,15 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     }
   }
 
-  // For teams that still have no divisionName, fall back to a match lookup
+  // For teams that still have no divisionName, fall back to match lookup then divisions table
   for (const t of allTeams) {
     const s = stats.get(t.id);
     if (s && !s.divisionName) {
       const match = allMatches.find(
         (m) => m.homeTeamId === t.id || m.awayTeamId === t.id
       );
-      s.divisionName = match?.divisionName ?? null;
+      s.divisionName = match?.divisionName
+        ?? (t.divisionId != null ? (divNameById.get(t.divisionId) ?? null) : null);
     }
   }
 

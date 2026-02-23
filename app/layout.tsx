@@ -9,9 +9,11 @@ const inter = Inter({
   display: "swap",
 });
 
+const LEAGUE_NAME = process.env.LEAGUE_NAME ?? "Dart League";
+
 export const metadata: Metadata = {
-  title: "Haverhill Dart League",
-  description: "Stats, schedule, and results for the Haverhill Dart League",
+  title: LEAGUE_NAME,
+  description: `Stats, schedule, and results for the ${LEAGUE_NAME}`,
 };
 
 export default function RootLayout({
@@ -30,7 +32,7 @@ export default function RootLayout({
               <span className="text-amber-400 text-lg select-none">◎</span>
               <div>
                 <span className="text-base font-semibold tracking-tight text-white">
-                  Haverhill Dart League
+                  {LEAGUE_NAME}
                 </span>
               </div>
             </div>
@@ -56,7 +58,7 @@ export default function RootLayout({
         <footer className="mt-16 border-t border-slate-800 py-4 text-center text-xs text-slate-600">
           Data sourced from{" "}
           <a
-            href="https://tv.dartconnect.com/league/HaverDL"
+            href={`https://tv.dartconnect.com/league/${process.env.DC_LEAGUE_ID ?? ""}`}
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-slate-400 transition-colors"

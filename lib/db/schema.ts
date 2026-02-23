@@ -15,7 +15,7 @@ import {
 
 export const seasons = pgTable("seasons", {
   id: integer("id").primaryKey(), // DartConnect season ID
-  leagueId: text("league_id").notNull().default("HaverDL"),
+  leagueId: text("league_id").notNull(),
   name: text("name").notNull(), // e.g. "Spring 2026"
   startDate: date("start_date"),
   isActive: boolean("is_active").notNull().default(false),
@@ -27,20 +27,24 @@ export const seasons = pgTable("seasons", {
 export const divisions = pgTable(
   "divisions",
   {
-    id: integer("id").primaryKey(), // DartConnect division ID
+    id: serial("id").primaryKey(),           // internal serial PK
+    dcId: integer("dc_id").notNull(),        // DartConnect division ID
     seasonId: integer("season_id")
       .notNull()
       .references(() => seasons.id),
-    name: text("name").notNull(), // "A", "B", etc.
-  }
+    name: text("name").notNull(),            // "A", "B", etc.
+  },
+  (t) => [uniqueIndex("divisions_dc_season_idx").on(t.dcId, t.seasonId)]
 );
 
 // ─── Teams ────────────────────────────────────────────────────────────────────
+// One row per team per season — same DC team can play in multiple seasons.
 
 export const teams = pgTable(
   "teams",
   {
-    id: integer("id").primaryKey(), // DartConnect team ID
+    id: serial("id").primaryKey(),          // internal serial PK
+    dcId: integer("dc_id").notNull(),        // DartConnect team ID
     seasonId: integer("season_id")
       .notNull()
       .references(() => seasons.id),
@@ -51,7 +55,8 @@ export const teams = pgTable(
     dcWins: integer("dc_wins"),
     dcLosses: integer("dc_losses"),
     dcLeaguePoints: integer("dc_league_points"),
-  }
+  },
+  (t) => [uniqueIndex("teams_dc_season_idx").on(t.dcId, t.seasonId)]
 );
 
 // ─── Players ──────────────────────────────────────────────────────────────────

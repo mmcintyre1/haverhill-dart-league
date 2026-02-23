@@ -1,6 +1,6 @@
 const DC_BASE = "https://tv.dartconnect.com";
-const LEAGUE_ID = "HaverDL";
-const LEAGUE_GUID = "29qj";
+// Read from env so the same codebase can serve any DartConnect league.
+const LEAGUE_ID = process.env.DC_LEAGUE_ID ?? "HaverDL";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -209,10 +209,11 @@ export async function fetchStandingsPageProps(
 }
 
 /** Fetch player leaderboard stats for a given season.
- *  opponent_guid must be a team's numeric ID string; season_status must be "REG". */
+ *  opponent_guid must be the team's numeric ID string (or league GUID for all-league);
+ *  season_status must be "REG". */
 export async function fetchPlayerStandings(
   seasonId: number,
-  body: object = { season_status: "REG", opponent_guid: LEAGUE_GUID },
+  body: object,
   cookies?: { xsrf: string; session: string }
 ): Promise<{ roster: DCPlayerStat[] }> {
   return dcPost(
@@ -222,9 +223,11 @@ export async function fetchPlayerStandings(
   );
 }
 
-/** Fetch team match standings for a given season */
+/** Fetch team match standings for a given season.
+ *  leagueGuid: the league's own GUID (from DCLeagueInfo.guid). */
 export async function fetchMatchStandings(
   seasonId: number,
+  leagueGuid: string,
   seasonStatus: "regular" | "post" = "regular",
   cookies?: { xsrf: string; session: string }
 ): Promise<{
@@ -233,7 +236,7 @@ export async function fetchMatchStandings(
 }> {
   return dcPost(
     `/api/league/${LEAGUE_ID}/standings/${seasonId}/matches`,
-    { season_status: seasonStatus, opponent_guid: LEAGUE_GUID },
+    { season_status: seasonStatus, opponent_guid: leagueGuid },
     cookies
   );
 }
