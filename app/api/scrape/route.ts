@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
           c
         );
         for (const p of res.roster ?? []) {
-          const pid = (p as Record<string, unknown>).id as number;
+          const pid = (p as unknown as Record<string, unknown>).id as number;
           if (!seenPlayerIds.has(pid)) {
             seenPlayerIds.add(pid);
             roster.push({ ...(p as DCPlayerStat), _teamName: teamName });
@@ -265,7 +265,7 @@ export async function POST(req: NextRequest) {
     // Build name→accum. If duplicate names exist on different teams, we key by "name|teamName".
     const accumByName = new Map<string, PlayerAccum>();
     for (const p of roster) {
-      const s = p as Record<string, unknown>;
+      const s = p as unknown as Record<string, unknown>;
       const firstName = String(s.player_first_name ?? "").trim();
       const lastName = String(s.player_last_name ?? "").trim();
       const playerName = [firstName, lastName].filter(Boolean).join(" ");
@@ -348,45 +348,44 @@ export async function POST(req: NextRequest) {
               const acc = accumByName.get(t.name);
               if (!acc) continue;
 
-              const score = t.turn_score ?? 0;
-              const remaining = t.current_score;
               const is01 = type === "601" || type === "501";
               const isCrkt = type === "crkt";
+              // For 01 games turn_score is numeric; for cricket it's a notation string
+              const score01 = is01 ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
+              const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
+              const remaining = t.current_score;
 
               const w = acc.weekStats.get(weekKey);
 
               // 100+: 601 single leg + 501 legs 1&2 only (no 501 tiebreaker)
-              if (is01 && !is501Tiebreaker && score >= 100) {
-                acc.hundredPlus += score;
+              if (is01 && !is501Tiebreaker && score01 >= 100) {
+                acc.hundredPlus += score01;
                 const cur = acc.weekHundredPlus.get(weekKey) ?? 0;
-                acc.weekHundredPlus.set(weekKey, cur + score);
-                if (w) w.hundredPlus += score;
+                acc.weekHundredPlus.set(weekKey, cur + score01);
+                if (w) w.hundredPlus += score01;
               }
 
               // 180
-              if (score === 180) {
+              if (is01 && score01 === 180) {
                 acc.oneEighty++;
                 if (w) w.oneEighty++;
               }
 
               // H Out: finishing throw (remaining hits 0) >100 in 01 games
-              if (is01 && remaining === 0 && score > 100) {
-                if (score > acc.hOut) acc.hOut = score;
-                if (w && score > w.hOut) w.hOut = score;
+              if (is01 && remaining === 0 && score01 > 100) {
+                if (score01 > acc.hOut) acc.hOut = score01;
+                if (w && score01 > w.hOut) w.hOut = score01;
               }
 
               // Cricket marks for RNDS: legs 1 and 2 only (not leg 3 tiebreaker)
               if (isCrkt && leg.set_game_number !== 3) {
-                acc.cricketRnds += score;
+                acc.cricketRnds += crktMarks;
               }
 
               // RO9: cricket 9-mark turn
-              if (isCrkt) {
-                const notable = t.notable?.toLowerCase() ?? "";
-                if (score === 9 || notable.includes("9") || notable.includes("nine")) {
-                  acc.ro9++;
-                  if (w) w.ro9++;
-                }
+              if (isCrkt && crktMarks === 9) {
+                acc.ro9++;
+                if (w) w.ro9++;
               }
             }
           }
@@ -506,7 +505,7 @@ export async function POST(req: NextRequest) {
     let playersUpdated = 0;
 
     for (const p of roster) {
-      const s = p as Record<string, unknown>;
+      const s = p as unknown as Record<string, unknown>;
       const firstName  = String(s.player_first_name ?? "").trim();
       const lastName   = String(s.player_last_name  ?? "").trim();
       const playerName = [firstName, lastName].filter(Boolean).join(" ");
