@@ -88,7 +88,7 @@ export default async function HomePage() {
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-amber-400 text-3xl select-none">◎</span>
                 <span className="text-xs font-semibold uppercase tracking-widest text-amber-500">
-                  Haverhill Dart League
+                  {process.env.LEAGUE_NAME}
                 </span>
               </div>
               <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-3">

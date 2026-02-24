@@ -300,7 +300,7 @@ async function scrapeSeasonStats(
       const rawRes = await (async () => {
         const { xsrf, session } = c2;
         const xsrfDecoded = decodeURIComponent(xsrf);
-        const r = await fetch(`https://tv.dartconnect.com/api/league/${process.env.DC_LEAGUE_ID ?? "HaverDL"}/standings/${targetSeasonId}/matches`, {
+        const r = await fetch(`https://tv.dartconnect.com/api/league/${process.env.DC_LEAGUE_ID ?? ""}/standings/${targetSeasonId}/matches`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -308,7 +308,7 @@ async function scrapeSeasonStats(
             "X-XSRF-TOKEN": xsrfDecoded,
             Cookie: `XSRF-TOKEN=${xsrf}; ${session}`,
             "User-Agent": "Mozilla/5.0",
-            Referer: `https://tv.dartconnect.com/league/${process.env.DC_LEAGUE_ID ?? "HaverDL"}`,
+            Referer: `https://tv.dartconnect.com/league/${process.env.DC_LEAGUE_ID ?? ""}`,
           },
           body: JSON.stringify({ season_status: "REG", opponent_guid: teamId }),
         });

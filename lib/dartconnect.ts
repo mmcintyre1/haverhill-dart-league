@@ -1,6 +1,6 @@
 const DC_BASE = "https://tv.dartconnect.com";
 // Read from env so the same codebase can serve any DartConnect league.
-const LEAGUE_ID = process.env.DC_LEAGUE_ID ?? "HaverDL";
+const LEAGUE_ID = process.env.DC_LEAGUE_ID ?? "";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
