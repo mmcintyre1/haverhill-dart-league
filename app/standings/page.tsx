@@ -192,6 +192,7 @@ export default async function StandingsPage({
 
       {standingsData.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-700 py-16 text-center text-slate-500">
+          <p className="text-3xl mb-3 select-none">◎</p>
           <p className="font-medium">No standings data yet</p>
           <p className="text-sm mt-1">Results will appear here as matches are played.</p>
         </div>
@@ -260,7 +261,7 @@ export default async function StandingsPage({
                           return (
                             <div
                               key={mi}
-                              className="flex items-center pl-12 pr-4 py-2 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
+                              className="flex items-center pl-12 pr-4 py-2.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
                             >
                               <div className="w-40 text-xs text-slate-500 tabular-nums truncate">
                                 {m.weekLabel || "—"}

@@ -151,6 +151,7 @@ export default async function LeaderboardPage({
 
       {allSeasons.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-600 py-16 text-center text-slate-400">
+          <p className="text-3xl mb-3 select-none">◎</p>
           <p className="font-medium">No data yet</p>
           <p className="mt-1 text-sm">
             Run a data refresh from the admin panel to load the latest from DartConnect.

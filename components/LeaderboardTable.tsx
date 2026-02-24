@@ -97,6 +97,7 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
   if (rows.length === 0) {
     return (
       <div className="text-center py-16 text-slate-400">
+        <p className="text-3xl mb-3 select-none">◎</p>
         <p className="text-lg font-medium">Season hasn&apos;t started yet</p>
         <p className="text-sm mt-1">Stats will appear once games are played.</p>
       </div>

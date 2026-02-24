@@ -136,6 +136,7 @@ export default async function HomePage() {
 
           {news.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-700 py-14 text-center text-slate-500 flex-1 flex flex-col items-center justify-center">
+              <p className="text-3xl mb-3 select-none">◎</p>
               <p className="font-medium text-slate-400">Stay tuned for announcements</p>
               <p className="text-sm mt-1">League news and updates will appear here throughout the season.</p>
             </div>
