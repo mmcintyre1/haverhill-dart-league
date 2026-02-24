@@ -94,7 +94,7 @@ function emptyWeek(opponentTeam: string): WeekAccum {
     crktWins: 0, crktLosses: 0,
     col601Wins: 0, col601Losses: 0,
     col501Wins: 0, col501Losses: 0,
-    hundredPlus: 0, oneEighty: 0, ro9: 0, hOut: 0, ldg: 0, rnds: 0,
+    hundredPlus: 0, oneEighty: 0, ro9: 0, hOut: 0, ldg: 999, rnds: 0,
     mpr: null, ppr: null,
   };
 }
@@ -112,7 +112,7 @@ interface PlayerAccum {
   oneEighty: number;
   ro9: number;
   hOut: number;
-  maxSetAvg: number;
+  minDarts501: number;
   zeroOnePointsTotal: number;
   zeroOneDartsTotal: number;
   crktMarksTotal: number;
@@ -130,7 +130,7 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     crktWins: 0, crktLosses: 0,
     col601Wins: 0, col601Losses: 0,
     col501Wins: 0, col501Losses: 0,
-    hundredPlus: 0, cricketRnds: 0, oneEighty: 0, ro9: 0, hOut: 0, maxSetAvg: 0,
+    hundredPlus: 0, cricketRnds: 0, oneEighty: 0, ro9: 0, hOut: 0, minDarts501: 999,
     zeroOnePointsTotal: 0, zeroOneDartsTotal: 0,
     crktMarksTotal: 0, crktDartsTotal: 0,
     weekHundredPlus: new Map(),
@@ -483,19 +483,20 @@ async function scrapeSeasonStats(
           }
         }
 
-        if (type !== "crkt") {
+        if (type === "501") {
+          // Lowest darts to win a 501 leg
           for (const side of ["home", "away"] as const) {
+            const sideIdx = side === "home" ? 0 : 1;
+            if (leg.winner_index !== sideIdx) continue; // winning side only
+            const darts = leg[side]?.darts_thrown;
+            if (darts == null || darts <= 0) continue;
             const sideNames = side === "home" ? homePlayers : awayPlayers;
-            const pprStr = leg[side]?.ppr;
-            if (pprStr == null) continue;
-            const pprVal = parseFloat(String(pprStr));
-            if (isNaN(pprVal) || pprVal === 0) continue;
             for (const pname of sideNames) {
               const acc = accumByName.get(pname);
               if (!acc) continue;
               const w = acc.weekStats.get(weekKey);
-              if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
-              if (w && pprVal > w.ldg) w.ldg = pprVal;
+              if (darts < acc.minDarts501) acc.minDarts501 = darts;
+              if (w && darts < w.ldg) w.ldg = darts;
             }
           }
         }
@@ -876,7 +877,7 @@ async function scrapeSeasonStats(
       zeroOneHh,
       ro9:         acc?.ro9          ?? 0,
       hOut:        acc?.hOut         ?? 0,
-      ldg:         acc ? Math.round(acc.maxSetAvg) : 0,
+      ldg:         acc && acc.minDarts501 < 999 ? acc.minDarts501 : null,
       ro6b:        0,
       mpr: leaderboardMprByName.get(playerName) ??
         (acc && acc.crktDartsTotal > 0
@@ -915,7 +916,7 @@ async function scrapeSeasonStats(
           oneEighty: w.oneEighty,
           ro9: w.ro9,
           hOut: w.hOut,
-          ldg: Math.round(w.ldg),
+          ldg: w.ldg < 999 ? w.ldg : 0,
           rnds: w.rnds,
           mpr: w.mpr,
           ppr: w.ppr,
@@ -1087,19 +1088,20 @@ async function scrapeSeasonStats(
               if (isCrkt && crktMarks === 9) { acc.ro9++; if (w) w.ro9++; }
             }
           }
-          if (type !== "crkt") {
+          if (type === "501") {
+            // Lowest darts to win a 501 leg
             for (const side of ["home", "away"] as const) {
+              const sideIdx = side === "home" ? 0 : 1;
+              if (leg.winner_index !== sideIdx) continue;
+              const darts = leg[side]?.darts_thrown;
+              if (darts == null || darts <= 0) continue;
               const sideNames = side === "home" ? homePlayers : awayPlayers;
-              const pprStr = leg[side]?.ppr;
-              if (pprStr == null) continue;
-              const pprVal = parseFloat(String(pprStr));
-              if (isNaN(pprVal) || pprVal === 0) continue;
               for (const pname of sideNames) {
                 const acc = postAccumByName.get(pname);
                 if (!acc) continue;
                 const w = acc.weekStats.get(weekKey);
-                if (pprVal > acc.maxSetAvg) acc.maxSetAvg = pprVal;
-                if (w && pprVal > w.ldg) w.ldg = pprVal;
+                if (darts < acc.minDarts501) acc.minDarts501 = darts;
+                if (w && darts < w.ldg) w.ldg = darts;
               }
             }
           }
@@ -1188,7 +1190,7 @@ async function scrapeSeasonStats(
         roHh: 0, zeroOneHh: 0,
         ro9:  acc?.ro9  ?? 0,
         hOut: acc?.hOut ?? 0,
-        ldg:  acc ? Math.round(acc.maxSetAvg) : 0,
+        ldg:  acc && acc.minDarts501 < 999 ? acc.minDarts501 : null,
         ro6b: 0,
         mpr: acc && acc.crktDartsTotal > 0
           ? ((acc.crktMarksTotal * 3) / acc.crktDartsTotal).toFixed(2)
@@ -1222,7 +1224,7 @@ async function scrapeSeasonStats(
             oneEighty: w.oneEighty,
             ro9: w.ro9,
             hOut: w.hOut,
-            ldg: Math.round(w.ldg),
+            ldg: w.ldg < 999 ? w.ldg : 0,
             rnds: w.rnds,
             mpr: w.mpr,
             ppr: w.ppr,

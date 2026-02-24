@@ -50,7 +50,7 @@ const COLUMNS: { key: SortKey; label: string; title?: string; sectionStart?: boo
   { key: "hOut",       label: "H Out", title: "High Out (>100)" },
   { key: "ppr",        label: "3DA",   title: "3-Dart Avg (01 games)" },
   { key: "zeroOneHh",  label: "01 HH", title: "01 Hot Hand" },
-  { key: "ldg",        label: "LDG",   title: "Highest single-set avg (01)" },
+  { key: "ldg",        label: "LDG",   title: "Lowest darts to win a 501 leg" },
   // Cricket
   { key: "rnds",       label: "RNDS",  title: "Cricket marks (legs 1+2)",     sectionStart: true },
   { key: "ro9",        label: "RO9",   title: "9-mark cricket turns" },
@@ -109,6 +109,15 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
       const bv = computeCustomPts(b, sp) ?? 0;
       return (bv - av) * sortDir;
     }
+    if (sortKey === "ldg") {
+      // Lower darts = better; null/0 always last
+      const av = a.ldg ?? 0;
+      const bv = b.ldg ?? 0;
+      if (av === 0 && bv === 0) return 0;
+      if (av === 0) return 1;
+      if (bv === 0) return -1;
+      return (av - bv) * sortDir;
+    }
     return numericSort(a, b, sortKey, sortDir);
   });
 
@@ -117,13 +126,67 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
       setSortDir((d) => (d === 1 ? -1 : 1));
     } else {
       setSortKey(key);
-      setSortDir(1);
+      // LDG: lower is better, so default to ascending
+      setSortDir(key === "ldg" ? -1 : 1);
     }
   }
 
   function arrow(key: SortKey) {
     if (key !== sortKey) return null;
     return sortDir === 1 ? " ↓" : " ↑";
+  }
+
+  function exportCSV() {
+    const headers = [
+      "Pos", "Name", "Team", "Div", "WP",
+      "601", "CRKT", "501", "SOS",
+      "100+", "180", "H Out", "3DA", "01 HH", "LDG",
+      "RNDS", "RO9", "MPR", "RO HH", "RO6B",
+      "AVG", "PTS",
+    ];
+    const csvRows = sorted.map((row, i) => {
+      const customAvg = computeCustomAvg(row, sp);
+      const avgDisplay = customAvg != null
+        ? `${(customAvg * 100).toFixed(1)}%`
+        : row.avg != null ? `${(parseFloat(row.avg) * 100).toFixed(1)}%` : "";
+      const customPts = computeCustomPts(row, sp);
+      const ptsDisplay = customPts != null
+        ? (Number.isInteger(customPts) ? String(customPts) : customPts.toFixed(1))
+        : String(row.pts ?? "");
+      const cells = [
+        String(row.pos ?? i + 1),
+        row.playerName,
+        row.teamName ?? "",
+        row.divisionName ?? "",
+        row.wp ?? "",
+        row.col601 ?? "",
+        row.crkt ?? "",
+        row.col501 ?? "",
+        row.sos ?? "",
+        String(row.hundredPlus ?? ""),
+        String(row.oneEighty ?? ""),
+        String(row.hOut ?? ""),
+        row.ppr != null ? parseFloat(row.ppr).toFixed(1) : "",
+        String(row.zeroOneHh ?? ""),
+        String(row.ldg ?? ""),
+        String(row.rnds ?? ""),
+        String(row.ro9 ?? ""),
+        row.mpr != null ? parseFloat(row.mpr).toFixed(2) : "",
+        String(row.roHh ?? ""),
+        String(row.ro6b ?? ""),
+        avgDisplay,
+        ptsDisplay,
+      ];
+      return cells.map((v) => `"${v.replace(/"/g, '""')}"`).join(",");
+    });
+    const csv = [headers.join(","), ...csvRows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "leaderboard.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   if (rows.length === 0) {
@@ -137,6 +200,15 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
   }
 
   return (
+    <>
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={exportCSV}
+          className="px-3 py-1.5 rounded text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+        >
+          Export CSV
+        </button>
+      </div>
     <div className="overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
       <table className="w-full text-sm border-collapse">
         <thead>
@@ -237,5 +309,6 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
         </tbody>
       </table>
     </div>
+    </>
   );
 }

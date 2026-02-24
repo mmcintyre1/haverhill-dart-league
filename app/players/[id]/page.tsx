@@ -214,7 +214,7 @@ export default async function PlayerPage({
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="9-mark cricket turns">RO9</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500" title="Cricket rounds with 6+ marks">RNDS</th>
                 <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-emerald-600" title="Marks Per Round (Cricket)">MPR</th>
-                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="Highest single-set avg (01)">LDG</th>
+                <th className="px-3 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-slate-500 border-l border-slate-700/60" title="Lowest darts to win a 501 leg">LDG</th>
               </tr>
             </thead>
             <tbody>

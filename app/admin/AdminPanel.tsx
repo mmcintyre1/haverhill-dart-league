@@ -259,7 +259,7 @@ const DEFAULT_GLOSSARY = JSON.stringify([
   { abbr: "H Out",  name: "High Out",                desc: "Highest checkout (finish) scored, must be over 100. All 3 game types count." },
   { abbr: "3DA",    name: "3-Dart Average",          desc: "Average score per 3-dart turn across all 01 games." },
   { abbr: "01 HH",  name: "01 Hot Hand",             desc: "Highest total hot hand score in 01 games." },
-  { abbr: "LDG",    name: "Leg Average",             desc: "Highest single-leg average in 01 games across the season." },
+  { abbr: "LDG",    name: "Low Dart Game",            desc: "Fewest darts used to win a 501 leg, tracked as the best (lowest) across the season." },
   { abbr: "RNDS",   name: "Cricket Marks",           desc: "Total cricket marks for turns at or above 6 marks, legs 1 and 2 only." },
   { abbr: "RO9",    name: "9-Mark Turns",            desc: "Cricket turns with three triples (9 marks)." },
   { abbr: "MPR",    name: "Marks Per Round",         desc: "Average cricket marks scored per round across all cricket games." },
