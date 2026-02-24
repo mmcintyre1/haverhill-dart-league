@@ -253,7 +253,7 @@ const DEFAULT_GLOSSARY = JSON.stringify([
   { abbr: "601",    name: "601 Record",              desc: "Win-loss record in 601 games." },
   { abbr: "501",    name: "501 Record",              desc: "Win-loss record in 501 games." },
   { abbr: "SOS",    name: "Strength of Schedule",    desc: "Average winning percentage of opponents faced." },
-  { abbr: "100+",   name: "100+ Scores",             desc: "Times you scored 100 or more in a single 3-dart turn." },
+  { abbr: "100+",   name: "100+ Scores",             desc: "Cumulative count of 3-dart turns scoring 100 or more, tallied across all games in the season." },
   { abbr: "180",    name: "180s",                    desc: "Perfect 3-dart scores of 180." },
   { abbr: "H Out",  name: "High Out",                desc: "Highest checkout (finish) scored, must be over 100. All 3 game types count." },
   { abbr: "3DA",    name: "3-Dart Average",          desc: "Average score per 3-dart turn across all 01 games." },
