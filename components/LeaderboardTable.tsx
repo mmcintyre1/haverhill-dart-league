@@ -43,20 +43,19 @@ const COLUMNS: { key: SortKey; label: string; title?: string; sectionStart?: boo
   { key: "crkt",       label: "CRKT",  title: "Cricket Record",              sectionStart: true },
   { key: "col601",     label: "601" },
   { key: "col501",     label: "501" },
-  // 01 Stats
+  { key: "sos",        label: "SOS",   title: "Strength of Schedule" },
+  // 01 Games
   { key: "hundredPlus", label: "100+", title: "100+ score total",             sectionStart: true },
   { key: "oneEighty",  label: "180" },
   { key: "hOut",       label: "H Out", title: "High Out (>100)" },
   { key: "ppr",        label: "3DA",   title: "3-Dart Avg (01 games)" },
-  // Cricket Stats
+  { key: "zeroOneHh",  label: "01 HH", title: "01 Hot Hand" },
+  { key: "ldg",        label: "LDG",   title: "Highest single-set avg (01)" },
+  // Cricket
   { key: "rnds",       label: "RNDS",  title: "Cricket marks (legs 1+2)",     sectionStart: true },
   { key: "ro9",        label: "RO9",   title: "9-mark cricket turns" },
   { key: "mpr",        label: "MPR",   title: "Marks Per Round (Cricket)" },
-  // Misc
-  { key: "sos",        label: "SOS",   title: "Strength of Schedule",         sectionStart: true },
   { key: "roHh",       label: "RO HH", title: "Rounds of Head-to-Head" },
-  { key: "zeroOneHh",  label: "01 HH", title: "01 Hot Hand" },
-  { key: "ldg",        label: "LDG",   title: "Highest single-set avg (01)" },
   { key: "ro6b",       label: "RO6B" },
   // Summary
   { key: "avg",        label: "AVG",   title: "Set Win %",                    sectionStart: true },
@@ -111,17 +110,14 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
           {/* Column group headers */}
           <tr className="bg-slate-900/50 border-b border-slate-700/30">
             <th colSpan={5} className="px-2 py-1" />
-            <th colSpan={3} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+            <th colSpan={4} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
               Records
             </th>
-            <th colSpan={4} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+            <th colSpan={6} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
               01 Games
             </th>
-            <th colSpan={3} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
-              Cricket
-            </th>
             <th colSpan={5} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
-              Misc
+              Cricket
             </th>
             <th colSpan={2} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-amber-600/70 border-l border-slate-700/60 font-semibold">
               Summary
@@ -169,24 +165,23 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.crkt ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col601 ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col501 ?? "—"}</td>
-              {/* 01 Stats */}
+              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.sos ?? "—"}</td>
+              {/* 01 Games */}
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.hundredPlus ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.oneEighty ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.hOut ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-sky-400 tabular-nums font-medium">
                 {row.ppr != null ? parseFloat(row.ppr).toFixed(1) : "—"}
               </td>
-              {/* Cricket Stats */}
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.zeroOneHh ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.ldg ?? "—"}</td>
+              {/* Cricket */}
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{row.rnds ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.ro9 ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-emerald-400 tabular-nums font-medium">
                 {row.mpr != null ? parseFloat(row.mpr).toFixed(2) : "—"}
               </td>
-              {/* Misc */}
-              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums border-l border-slate-800">{row.sos ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.roHh ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.zeroOneHh ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.ldg ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.ro6b ?? "—"}</td>
               {/* Summary */}
               <td className="px-2 py-1.5 text-center text-sky-400 font-medium tabular-nums border-l border-slate-800">
