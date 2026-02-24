@@ -251,9 +251,9 @@ export default async function StandingsPage({
                     {row.matchRows.length > 0 && (
                       <div className="border-t border-slate-800/50 bg-slate-950/50">
                         <div className="flex items-center pl-12 pr-4 py-1.5 text-[0.6rem] uppercase tracking-wider text-slate-600 border-b border-slate-800/40">
-                          <div className="w-40">Date</div>
+                          <div className="w-28">Date</div>
                           <div className="flex-1">Opponent</div>
-                          <div className="w-24 text-center">Score</div>
+                          <div className="w-20 text-center">Result</div>
                           <div className="w-6" />
                         </div>
                         {row.matchRows.map((m, mi) => {
@@ -261,16 +261,18 @@ export default async function StandingsPage({
                           return (
                             <div
                               key={mi}
-                              className="flex items-center pl-12 pr-4 py-2.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
+                              className="flex items-center pl-12 pr-4 py-1.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
                             >
-                              <div className="w-40 text-xs text-slate-500 tabular-nums truncate">
+                              <div className="w-28 text-xs text-slate-500 tabular-nums truncate">
                                 {m.weekLabel || "—"}
                               </div>
-                              <div className="flex-1 text-xs text-slate-400 truncate">{m.opponent}</div>
-                              <div className={`w-24 text-center text-xs tabular-nums font-medium ${
-                                won ? "text-emerald-400" : "text-rose-400"
-                              }`}>
-                                {m.teamScore}–{m.opponentScore} {won ? "W" : "L"}
+                              <div className="flex-1 text-xs text-slate-300 truncate">{m.opponent}</div>
+                              <div className="w-20 flex justify-center">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.65rem] font-semibold tabular-nums ${
+                                  won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
+                                }`}>
+                                  {won ? "W" : "L"} {m.teamScore}–{m.opponentScore}
+                                </span>
                               </div>
                               <div className="w-6 text-center">
                                 {m.dcGuid && (
