@@ -20,6 +20,7 @@ export default function SeasonSelector({
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("season", e.target.value);
+    params.delete("division");
     router.push(`?${params.toString()}`);
   }
 

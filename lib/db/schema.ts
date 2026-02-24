@@ -174,6 +174,27 @@ export const playerWeekStats = pgTable(
   ]
 );
 
+// ─── Player Season Teams (one row per player per season) ──────────────────────
+// Authoritative team/division membership, decoupled from playerStats.
+
+export const playerSeasonTeams = pgTable(
+  "player_season_teams",
+  {
+    id: serial("id").primaryKey(),
+    playerId: integer("player_id")
+      .notNull()
+      .references(() => players.id),
+    seasonId: integer("season_id")
+      .notNull()
+      .references(() => seasons.id),
+    teamId: integer("team_id").references(() => teams.id),
+    teamName: text("team_name"),
+    divisionId: integer("division_id").references(() => divisions.id),
+    divisionName: text("division_name"),
+  },
+  (t) => [uniqueIndex("pst_player_season_idx").on(t.playerId, t.seasonId)]
+);
+
 // ─── News Posts ───────────────────────────────────────────────────────────────
 
 export const newsPosts = pgTable("news_posts", {

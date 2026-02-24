@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq, and } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog } from "@/lib/db";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams } from "@/lib/db";
 import {
   fetchLeaguePageProps,
   fetchStandingsPageProps,
@@ -604,11 +604,44 @@ async function scrapeSeasonStats(
     const playerId = player.id;
 
     const teamRows = await db
-      .select({ id: teams.id })
+      .select({ id: teams.id, divisionId: teams.divisionId })
       .from(teams)
       .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.name, teamName)))
       .limit(1);
     const teamId = teamRows[0]?.id ?? null;
+    const teamDivisionId = teamRows[0]?.divisionId ?? null;
+
+    // Resolve division name for this team
+    let divisionName: string | null = null;
+    if (teamDivisionId != null) {
+      const divRows = await db
+        .select({ name: divisions.name })
+        .from(divisions)
+        .where(eq(divisions.id, teamDivisionId))
+        .limit(1);
+      divisionName = divRows[0]?.name ?? null;
+    }
+
+    // Upsert player → season → team/division membership
+    await db
+      .insert(playerSeasonTeams)
+      .values({
+        playerId,
+        seasonId: targetSeasonId,
+        teamId: teamId ?? null,
+        teamName: teamName || null,
+        divisionId: teamDivisionId ?? null,
+        divisionName,
+      })
+      .onConflictDoUpdate({
+        target: [playerSeasonTeams.playerId, playerSeasonTeams.seasonId],
+        set: {
+          teamId: teamId ?? null,
+          teamName: teamName || null,
+          divisionId: teamDivisionId ?? null,
+          divisionName,
+        },
+      });
 
     const acc = accumByName.get(playerName);
     const setWins_   = acc?.setWins   ?? 0;

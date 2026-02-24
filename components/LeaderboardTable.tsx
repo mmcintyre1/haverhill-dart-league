@@ -8,6 +8,7 @@ export interface LeaderboardRow {
   pos: number | null;
   playerName: string;
   teamName: string | null;
+  divisionName: string | null;
   wp: string | null;
   crkt: string | null;
   col601: string | null;
@@ -33,10 +34,11 @@ type SortKey = keyof LeaderboardRow;
 // sectionStart adds a visual left-border divider to group related columns
 const COLUMNS: { key: SortKey; label: string; title?: string; sectionStart?: boolean }[] = [
   // Identity
-  { key: "pos",        label: "Pos" },
-  { key: "playerName", label: "Name" },
-  { key: "teamName",   label: "Team" },
-  { key: "wp",         label: "WP",    title: "Weeks Played" },
+  { key: "pos",          label: "Pos" },
+  { key: "playerName",   label: "Name" },
+  { key: "teamName",     label: "Team" },
+  { key: "divisionName", label: "Div",  title: "Division" },
+  { key: "wp",           label: "WP",   title: "Weeks Played" },
   // Records
   { key: "crkt",       label: "CRKT",  title: "Cricket Record",              sectionStart: true },
   { key: "col601",     label: "601" },
@@ -141,6 +143,7 @@ export default function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
                 </Link>
               </td>
               <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap text-xs">{row.teamName ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-500 text-xs">{row.divisionName ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.wp ?? "—"}</td>
               {/* Records */}
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.crkt ?? "—"}</td>

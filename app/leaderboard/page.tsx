@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { db, seasons, playerStats, players, teams, divisions } from "@/lib/db";
+import { db, seasons, playerStats, players, playerSeasonTeams } from "@/lib/db";
+import { divisions } from "@/lib/db/schema";
 import { eq, and, desc, asc } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
 import SeasonSelector from "@/components/SeasonSelector";
@@ -30,7 +31,8 @@ async function getLeaderboard(
       id: playerStats.playerId,
       pos: playerStats.pos,
       playerName: players.name,
-      teamName: playerStats.teamName,
+      teamName: playerSeasonTeams.teamName,
+      divisionName: playerSeasonTeams.divisionName,
       wp: playerStats.wp,
       crkt: playerStats.crkt,
       col601: playerStats.col601,
@@ -52,11 +54,16 @@ async function getLeaderboard(
     })
     .from(playerStats)
     .innerJoin(players, eq(playerStats.playerId, players.id))
-    .leftJoin(teams, eq(playerStats.teamId, teams.id))
-    .leftJoin(divisions, eq(teams.divisionId, divisions.id))
+    .leftJoin(
+      playerSeasonTeams,
+      and(
+        eq(playerStats.playerId, playerSeasonTeams.playerId),
+        eq(playerStats.seasonId, playerSeasonTeams.seasonId)
+      )
+    )
     .where(
       divisionFilter
-        ? and(eq(playerStats.seasonId, seasonId), eq(divisions.name, divisionFilter))
+        ? and(eq(playerStats.seasonId, seasonId), eq(playerSeasonTeams.divisionName, divisionFilter))
         : eq(playerStats.seasonId, seasonId)
     )
     .orderBy(asc(playerStats.pos));
