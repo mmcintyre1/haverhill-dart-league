@@ -20,6 +20,14 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
   return rows.map((r) => r.name).filter(Boolean) as string[];
 }
 
+type MatchRow = {
+  weekLabel: string;
+  opponent: string;
+  teamScore: number;
+  opponentScore: number;
+  dcGuid: string | null;
+};
+
 async function getStandings(seasonId: number, divisionFilter: string | null) {
   const [allTeams, allMatches, allDivisions] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
@@ -31,17 +39,24 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
           eq(matches.seasonId, seasonId),
           or(eq(matches.status, "C"), gt(matches.homeScore!, 0), gt(matches.awayScore!, 0))
         )
-      ),
+      )
+      .orderBy(asc(matches.schedDate)),
     db.select().from(divisions).where(eq(divisions.seasonId, seasonId)),
   ]);
 
-  // Fallback map: division serial ID → name (used when no match data exists, e.g. archived seasons)
   const divNameById = new Map(allDivisions.map((d) => [d.id, d.name]));
 
-  // Build standings per team — prefer DartConnect-authoritative fields when available
   const stats = new Map<
     number,
-    { name: string; divisionName: string | null; wins: number; losses: number; pts: number; usedDC: boolean }
+    {
+      name: string;
+      divisionName: string | null;
+      wins: number;
+      losses: number;
+      pts: number;
+      usedDC: boolean;
+      matchRows: MatchRow[];
+    }
   >();
 
   for (const t of allTeams) {
@@ -53,10 +68,10 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       losses: hasDC ? t.dcLosses! : 0,
       pts: hasDC && t.dcLeaguePoints != null ? t.dcLeaguePoints : 0,
       usedDC: hasDC,
+      matchRows: [],
     });
   }
 
-  // For teams without DC data, compute W/L/Pts from match records
   for (const m of allMatches) {
     const hs = m.homeScore ?? 0;
     const as_ = m.awayScore ?? 0;
@@ -65,23 +80,42 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     const home = m.homeTeamId ? stats.get(m.homeTeamId) : null;
     const away = m.awayTeamId ? stats.get(m.awayTeamId) : null;
 
-    // divisionName always comes from matches regardless of DC data source
     if (home) home.divisionName = home.divisionName ?? m.divisionName;
     if (away) away.divisionName = away.divisionName ?? m.divisionName;
 
-    if (home && !home.usedDC) {
-      home.pts += hs;
-      if (hs > as_) home.wins++;
-      else home.losses++;
+    const weekLabel = m.prettyDate ?? m.schedDate ?? "";
+
+    if (home) {
+      home.matchRows.push({
+        weekLabel,
+        opponent: m.awayTeamName ?? "Unknown",
+        teamScore: hs,
+        opponentScore: as_,
+        dcGuid: m.dcGuid ?? null,
+      });
+      if (!home.usedDC) {
+        home.pts += hs;
+        if (hs > as_) home.wins++;
+        else home.losses++;
+      }
     }
-    if (away && !away.usedDC) {
-      away.pts += as_;
-      if (as_ > hs) away.wins++;
-      else away.losses++;
+    if (away) {
+      away.matchRows.push({
+        weekLabel,
+        opponent: m.homeTeamName ?? "Unknown",
+        teamScore: as_,
+        opponentScore: hs,
+        dcGuid: m.dcGuid ?? null,
+      });
+      if (!away.usedDC) {
+        away.pts += as_;
+        if (as_ > hs) away.wins++;
+        else away.losses++;
+      }
     }
   }
 
-  // For teams that still have no divisionName, fall back to match lookup then divisions table
+  // Fallback divisionName for teams that had no completed matches
   for (const t of allTeams) {
     const s = stats.get(t.id);
     if (s && !s.divisionName) {
@@ -93,7 +127,6 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     }
   }
 
-  // Group by division, applying optional filter
   const byDiv = new Map<string, (typeof stats extends Map<number, infer V> ? V & { id: number } : never)[]>();
   for (const [id, s] of stats) {
     const div = s.divisionName ?? "Other";
@@ -102,7 +135,6 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     byDiv.get(div)!.push({ ...s, id });
   }
 
-  // Sort each division by wins desc, pts desc, losses asc
   for (const [, rows] of byDiv) {
     rows.sort((a, b) => b.wins - a.wins || b.pts - a.pts || a.losses - b.losses);
   }
@@ -167,50 +199,99 @@ export default async function StandingsPage({
         <div className="space-y-8">
           {standingsData.map(([divName, rows]) => (
             <div key={divName} className="rounded-lg border border-slate-800 overflow-hidden shadow-xl">
+              {/* Division header */}
               <div className="bg-slate-800/80 px-4 py-2.5 border-b border-slate-700">
                 <span className="text-sm font-semibold text-slate-200">Division {divName}</span>
               </div>
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-slate-900 border-b border-slate-700/60">
-                    <th className="px-4 py-2 text-left text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium w-8">#</th>
-                    <th className="px-4 py-2 text-left text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium">Team</th>
-                    <th className="px-4 py-2 text-center text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium w-12">W</th>
-                    <th className="px-4 py-2 text-center text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium w-12">L</th>
-                    <th className="px-4 py-2 text-center text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium w-16">Pct</th>
-                    <th className="px-4 py-2 text-center text-[0.65rem] uppercase tracking-wider text-amber-600 font-medium w-16">Pts</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, i) => {
-                    const total = row.wins + row.losses;
-                    const pct = total > 0 ? (row.wins / total).toFixed(3) : "—";
-                    const isTop = i === 0 && row.wins > 0;
-                    return (
-                      <tr
-                        key={row.id}
-                        className={`border-t border-slate-800 transition-colors hover:bg-amber-500/5 ${
-                          i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
-                        }`}
-                      >
-                        <td className="px-4 py-2.5 text-slate-600 text-xs tabular-nums">{i + 1}</td>
-                        <td className={`px-4 py-2.5 font-medium ${isTop ? "text-amber-400" : "text-slate-200"}`}>
-                          {row.name}
-                          {isTop && (
-                            <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-amber-600 font-semibold">
-                              LEAD
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-center text-slate-200 tabular-nums font-semibold">{row.wins}</td>
-                        <td className="px-4 py-2.5 text-center text-slate-400 tabular-nums">{row.losses}</td>
-                        <td className="px-4 py-2.5 text-center text-slate-400 tabular-nums">{pct}</td>
-                        <td className="px-4 py-2.5 text-center text-amber-400 tabular-nums font-semibold">{row.pts}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+
+              {/* Column headers */}
+              <div className="flex items-center px-4 py-2 bg-slate-900 border-b border-slate-700/60 text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium">
+                <div className="w-6 mr-2" />
+                <div className="w-6">#</div>
+                <div className="flex-1">Team</div>
+                <div className="w-12 text-center">W</div>
+                <div className="w-12 text-center">L</div>
+                <div className="w-16 text-center">Pct</div>
+                <div className="w-16 text-center text-amber-600">Pts</div>
+              </div>
+
+              {/* Team rows */}
+              {rows.map((row, i) => {
+                const total = row.wins + row.losses;
+                const pct = total > 0 ? (row.wins / total).toFixed(3) : "—";
+                const isTop = i === 0 && row.wins > 0;
+                return (
+                  <details
+                    key={row.id}
+                    className={`group border-t border-slate-800 ${
+                      i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
+                    }`}
+                  >
+                    <summary className="flex items-center px-4 py-2.5 cursor-pointer hover:bg-amber-500/5 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
+                      <span className="w-4 mr-2 text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block">
+                        ▸
+                      </span>
+                      <span className="w-6 text-xs text-slate-600 tabular-nums">{i + 1}</span>
+                      <span className={`flex-1 text-sm font-medium ${isTop ? "text-amber-400" : "text-slate-200"}`}>
+                        {row.name}
+                        {isTop && (
+                          <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-amber-600 font-semibold">
+                            LEAD
+                          </span>
+                        )}
+                      </span>
+                      <span className="w-12 text-center text-sm text-slate-200 tabular-nums font-semibold">{row.wins}</span>
+                      <span className="w-12 text-center text-sm text-slate-400 tabular-nums">{row.losses}</span>
+                      <span className="w-16 text-center text-sm text-slate-400 tabular-nums">{pct}</span>
+                      <span className="w-16 text-center text-sm text-amber-400 tabular-nums font-semibold">{row.pts}</span>
+                    </summary>
+
+                    {/* Expanded match rows */}
+                    {row.matchRows.length > 0 && (
+                      <div className="border-t border-slate-800/50 bg-slate-950/50">
+                        <div className="flex items-center pl-12 pr-4 py-1.5 text-[0.6rem] uppercase tracking-wider text-slate-600 border-b border-slate-800/40">
+                          <div className="w-40">Date</div>
+                          <div className="flex-1">Opponent</div>
+                          <div className="w-24 text-center">Score</div>
+                          <div className="w-6" />
+                        </div>
+                        {row.matchRows.map((m, mi) => {
+                          const won = m.teamScore > m.opponentScore;
+                          return (
+                            <div
+                              key={mi}
+                              className="flex items-center pl-12 pr-4 py-2 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
+                            >
+                              <div className="w-40 text-xs text-slate-500 tabular-nums truncate">
+                                {m.weekLabel || "—"}
+                              </div>
+                              <div className="flex-1 text-xs text-slate-400 truncate">{m.opponent}</div>
+                              <div className={`w-24 text-center text-xs tabular-nums font-medium ${
+                                won ? "text-emerald-400" : "text-rose-400"
+                              }`}>
+                                {m.teamScore}–{m.opponentScore} {won ? "W" : "L"}
+                              </div>
+                              <div className="w-6 text-center">
+                                {m.dcGuid && (
+                                  <a
+                                    href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-slate-600 hover:text-sky-400 transition-colors text-xs"
+                                    title="View match recap on DartConnect"
+                                  >
+                                    ↗
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </details>
+                );
+              })}
             </div>
           ))}
         </div>

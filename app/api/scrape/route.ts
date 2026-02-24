@@ -556,7 +556,7 @@ async function scrapeSeasonStats(
 
     await db
       .update(matches)
-      .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", updatedAt: new Date() })
+      .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", dcGuid: guid, updatedAt: new Date() })
       .where(and(
         eq(matches.seasonId, targetSeasonId),
         eq(matches.homeTeamId, homeSerialId),

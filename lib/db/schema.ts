@@ -134,6 +134,7 @@ export const matches = pgTable("matches", {
   homeScore: integer("home_score").default(0),
   awayScore: integer("away_score").default(0),
   dcMatchId: integer("dc_match_id"),     // null until played on boards
+  dcGuid: text("dc_guid"),              // hex GUID for recap.dartconnect.com/games/{guid}
   seasonStatus: text("season_status"),   // "REG" or "POST"
   prettyDate: text("pretty_date"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
