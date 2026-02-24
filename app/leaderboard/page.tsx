@@ -1,7 +1,7 @@
 import { Suspense } from "react";
-import { db, seasons, playerStats, players, playerSeasonTeams } from "@/lib/db";
+import { db, seasons, playerStats, players, playerSeasonTeams, scoringConfig } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, or, isNull } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
@@ -81,6 +81,30 @@ async function getLeaderboard(
   return query as unknown as Promise<LeaderboardRow[]>;
 }
 
+export type ScoringPts = { cricket: number; "601": number; "501": number };
+
+async function getScoringPts(seasonId: number): Promise<ScoringPts> {
+  const rows = await db
+    .select()
+    .from(scoringConfig)
+    .where(
+      and(
+        or(eq(scoringConfig.scope, "global"), eq(scoringConfig.scope, String(seasonId))),
+        isNull(scoringConfig.division)
+      )
+    );
+  // Resolution: global first, then season-specific overrides
+  const pts: ScoringPts = { cricket: 1, "601": 1, "501": 1 };
+  const globalRows = rows.filter(r => r.scope === "global");
+  const seasonRows = rows.filter(r => r.scope !== "global");
+  for (const r of [...globalRows, ...seasonRows]) {
+    if (r.key === "cricket.win_pts") pts.cricket = Number(r.value);
+    if (r.key === "601.win_pts")     pts["601"]   = Number(r.value);
+    if (r.key === "501.win_pts")     pts["501"]   = Number(r.value);
+  }
+  return pts;
+}
+
 async function getLastScraped(seasonId: number): Promise<Date | null> {
   const [row] = await db
     .select({ lastScrapedAt: seasons.lastScrapedAt })
@@ -106,11 +130,12 @@ export default async function LeaderboardPage({
   const divisionFilter = params.division ?? null;
   const phase = params.phase ?? "REG";
 
-  const [rows, lastScraped, divisionList, postExists] = await Promise.all([
+  const [rows, lastScraped, divisionList, postExists, scoringPts] = await Promise.all([
     activeId ? getLeaderboard(activeId, divisionFilter, phase) : Promise.resolve([]),
     activeId ? getLastScraped(activeId) : Promise.resolve(null),
     activeId ? getDivisionsForSeason(activeId) : Promise.resolve([]),
     activeId ? hasPostseason(activeId) : Promise.resolve(false),
+    activeId ? getScoringPts(activeId) : Promise.resolve({ cricket: 1, "601": 1, "501": 1 }),
   ]);
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
@@ -158,7 +183,7 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={rows} seasonId={activeId} phase={phase} />
+        <LeaderboardTable rows={rows} seasonId={activeId} phase={phase} scoringPts={scoringPts} />
       )}
     </div>
   );

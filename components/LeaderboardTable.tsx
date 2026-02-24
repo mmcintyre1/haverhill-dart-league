@@ -68,7 +68,24 @@ function numericSort(a: LeaderboardRow, b: LeaderboardRow, key: SortKey, dir: 1 
   return (bv - av) * dir;
 }
 
-export default function LeaderboardTable({ rows, seasonId, phase }: { rows: LeaderboardRow[]; seasonId?: number; phase?: string }) {
+import type { ScoringPts } from "@/app/leaderboard/page";
+
+function parseRecord(s: string | null): { w: number; l: number } {
+  if (!s) return { w: 0, l: 0 };
+  const parts = s.split("-").map(Number);
+  return { w: parts[0] || 0, l: parts[1] || 0 };
+}
+
+function computeCustomAvg(row: LeaderboardRow, sp: ScoringPts): number | null {
+  const crkt = parseRecord(row.crkt);
+  const r601 = parseRecord(row.col601);
+  const r501 = parseRecord(row.col501);
+  const earned = crkt.w * sp.cricket + r601.w * sp["601"] + r501.w * sp["501"];
+  const avail = (crkt.w + crkt.l) * sp.cricket + (r601.w + r601.l) * sp["601"] + (r501.w + r501.l) * sp["501"];
+  return avail > 0 ? earned / avail : null;
+}
+
+export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: { rows: LeaderboardRow[]; seasonId?: number; phase?: string; scoringPts?: ScoringPts }) {
   const [sortKey, setSortKey] = useState<SortKey>("pts");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
@@ -185,9 +202,13 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.ro6b ?? "—"}</td>
               {/* Summary */}
               <td className="px-2 py-1.5 text-center text-amber-300 font-medium tabular-nums border-l border-slate-800">
-                {row.avg != null
-                  ? `${(parseFloat(row.avg) * 100).toFixed(1)}%`
-                  : "—"}
+                {(() => {
+                  const sp = scoringPts ?? { cricket: 1, "601": 1, "501": 1 };
+                  const customAvg = computeCustomAvg(row, sp);
+                  return customAvg != null
+                    ? `${(customAvg * 100).toFixed(1)}%`
+                    : row.avg != null ? `${(parseFloat(row.avg) * 100).toFixed(1)}%` : "—";
+                })()}
               </td>
               <td className="px-2 py-1.5 text-center font-bold text-amber-400 tabular-nums">{row.pts ?? "—"}</td>
             </tr>

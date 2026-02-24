@@ -9,7 +9,7 @@ type Season = {
   lastScrapedAt: Date | null;
 };
 
-type TabId = "posts" | "refresh" | "content";
+type TabId = "posts" | "refresh" | "content" | "scoring";
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     { id: "posts", label: "News Posts" },
     { id: "refresh", label: "Data Refresh" },
     { id: "content", label: "Site Content" },
+    { id: "scoring", label: "Scoring" },
   ];
   return (
     <div className="flex gap-1 mb-6 border-b border-slate-800">
@@ -365,6 +366,248 @@ function ContentTab({ secret }: { secret: string }) {
   );
 }
 
+// ── Scoring tab ───────────────────────────────────────────────────────────────
+
+type ScoringRow = { scope: string; division: string | null; key: string; value: string };
+
+const DIVISIONS = ["A", "B", "C", "D"];
+
+const HH_DIVISION_DEFAULTS: Record<string, { hh: string; roHh: string }> = {
+  A: { hh: "475", roHh: "20" },
+  B: { hh: "450", roHh: "17" },
+  C: { hh: "425", roHh: "14" },
+  D: { hh: "400", roHh: "12" },
+};
+
+function resolveConfig(rows: ScoringRow[], scope: string, division: string) {
+  // Resolution order (later tiers override earlier): global → global+div → season → season+div
+  const tiers = [
+    rows.filter(r => r.scope === "global" && !r.division),
+    rows.filter(r => r.scope === "global" && r.division === division),
+    rows.filter(r => r.scope === scope && !r.division),
+    rows.filter(r => r.scope === scope && r.division === division),
+  ];
+  const out: Record<string, string> = {};
+  for (const tier of tiers) for (const row of tier) out[row.key] = row.value;
+  return out;
+}
+
+function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
+  const [scope, setScope] = useState("global");
+  const [division, setDivision] = useState("A");
+  const [allRows, setAllRows] = useState<ScoringRow[]>([]);
+  const [fetching, setFetching] = useState(true);
+
+  // Editable point-value fields
+  const [cricketPts, setCricketPts] = useState("1");
+  const [pts601, setPts601] = useState("1");
+  const [pts501, setPts501] = useState("1");
+  const [ptsLoading, setPtsLoading] = useState(false);
+  const [ptsResult, setPtsResult] = useState<Result | null>(null);
+
+  // Editable HH threshold fields
+  const [hhThreshold, setHhThreshold] = useState("475");
+  const [roHhThreshold, setRoHhThreshold] = useState("20");
+  const [hhLoading, setHhLoading] = useState(false);
+  const [hhResult, setHhResult] = useState<Result | null>(null);
+
+  // Fetch all config rows for global + selected scope
+  useEffect(() => {
+    async function load() {
+      setFetching(true);
+      const headers: Record<string, string> = {};
+      if (secret) headers["Authorization"] = `Bearer ${secret}`;
+      const params = new URLSearchParams();
+      params.append("scope", "global");
+      if (scope !== "global") params.append("scope", scope);
+      const res = await fetch(`/api/admin/scoring-config?${params}`, { headers });
+      const rows: ScoringRow[] = res.ok ? await res.json() : [];
+      setAllRows(rows);
+      setFetching(false);
+    }
+    load();
+  }, [scope, secret]);
+
+  // Derive displayed values from rows + current division
+  useEffect(() => {
+    const cfg = resolveConfig(allRows, scope, division);
+    setCricketPts(cfg["cricket.win_pts"] ?? "1");
+    setPts601(cfg["601.win_pts"] ?? "1");
+    setPts501(cfg["501.win_pts"] ?? "1");
+    const divDef = HH_DIVISION_DEFAULTS[division] ?? HH_DIVISION_DEFAULTS["A"];
+    setHhThreshold(cfg["01_hh.threshold"] ?? divDef.hh);
+    setRoHhThreshold(cfg["ro_hh.threshold"] ?? divDef.roHh);
+  }, [allRows, scope, division]);
+
+  async function saveRow(key: string, value: string, div: string | null,
+    setLoading: (v: boolean) => void, setResult: (r: Result | null) => void) {
+    setLoading(true);
+    setResult(null);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (secret) headers["Authorization"] = `Bearer ${secret}`;
+      const res = await fetch("/api/admin/scoring-config", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ scope, division: div, key, value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Unknown error");
+      // Optimistically update allRows
+      setAllRows(prev => {
+        const filtered = prev.filter(r => !(r.scope === scope && r.division === div && r.key === key));
+        return [...filtered, { scope, division: div, key, value }];
+      });
+      setResult({ ok: true, message: "Saved." });
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const inputCls = "w-20 rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm text-slate-200 text-center focus:outline-none focus:border-amber-500 tabular-nums";
+  const saveBtnCls = "px-4 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50";
+
+  const scopeIsGlobal = scope === "global";
+  const scopeLabel = scopeIsGlobal ? "Global defaults" : (seasons.find(s => String(s.id) === scope)?.name ?? scope);
+
+  return (
+    <div className="space-y-8">
+      {/* Scope selector */}
+      <div>
+        <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Scope</label>
+        <div className="flex flex-wrap gap-2 items-center">
+          <button
+            onClick={() => setScope("global")}
+            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${scope === "global" ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+          >
+            Global defaults
+          </button>
+          {seasons.map(s => (
+            <button
+              key={s.id}
+              onClick={() => setScope(String(s.id))}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${scope === String(s.id) ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+        {!scopeIsGlobal && (
+          <p className="mt-1.5 text-xs text-slate-500">
+            Showing resolved values for <span className="text-slate-300">{scopeLabel}</span> — season values override global. Save writes a season-specific override.
+          </p>
+        )}
+      </div>
+
+      {fetching ? (
+        <div className="text-slate-500 text-sm py-2">Loading…</div>
+      ) : (
+        <>
+          {/* Point values */}
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <h3 className="text-sm font-semibold text-slate-200">Point Values per Win</h3>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Wins earn the configured points; losses earn 0. AVG on the leaderboard is recalculated as earned ÷ available points.
+            </p>
+            <div className="flex flex-wrap gap-6 items-end">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Cricket</label>
+                <input type="number" min="0" step="0.5" value={cricketPts}
+                  onChange={e => setCricketPts(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">601</label>
+                <input type="number" min="0" step="0.5" value={pts601}
+                  onChange={e => setPts601(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">501</label>
+                <input type="number" min="0" step="0.5" value={pts501}
+                  onChange={e => setPts501(e.target.value)} className={inputCls} />
+              </div>
+              <button
+                disabled={ptsLoading}
+                className={saveBtnCls}
+                onClick={() => {
+                  const saves = [
+                    saveRow("cricket.win_pts", cricketPts, null, setPtsLoading, setPtsResult),
+                    saveRow("601.win_pts", pts601, null, setPtsLoading, setPtsResult),
+                    saveRow("501.win_pts", pts501, null, setPtsLoading, setPtsResult),
+                  ];
+                  Promise.all(saves).then(() =>
+                    setPtsResult({ ok: true, message: "Point values saved." })
+                  ).catch(e =>
+                    setPtsResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
+                  );
+                }}
+              >
+                {ptsLoading ? "Saving…" : "Save Point Values"}
+              </button>
+            </div>
+            {ptsResult && <ResultBanner result={ptsResult} onDismiss={() => setPtsResult(null)} />}
+          </div>
+
+          {/* Hot hand thresholds */}
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <h3 className="text-sm font-semibold text-slate-200">Hot Hand Thresholds</h3>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Minimum weekly total to qualify as a hot hand. 01 HH = sum of 100+ scores in a week (legs 1 &amp; 2). RO HH = total cricket marks in qualifying rounds.
+            </p>
+            <div className="flex flex-wrap gap-4 items-end">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Division</label>
+                <select
+                  value={division}
+                  onChange={e => setDivision(e.target.value)}
+                  className="rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                >
+                  {DIVISIONS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">01 HH threshold</label>
+                <input type="number" min="0" step="1" value={hhThreshold}
+                  onChange={e => setHhThreshold(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">RO HH threshold</label>
+                <input type="number" min="0" step="1" value={roHhThreshold}
+                  onChange={e => setRoHhThreshold(e.target.value)} className={inputCls} />
+              </div>
+              <button
+                disabled={hhLoading}
+                className={saveBtnCls}
+                onClick={() => {
+                  const saves = [
+                    saveRow("01_hh.threshold", hhThreshold, division, setHhLoading, setHhResult),
+                    saveRow("ro_hh.threshold", roHhThreshold, division, setHhLoading, setHhResult),
+                  ];
+                  Promise.all(saves).then(() =>
+                    setHhResult({ ok: true, message: `Thresholds saved for Division ${division}.` })
+                  ).catch(e =>
+                    setHhResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
+                  );
+                }}
+              >
+                {hhLoading ? "Saving…" : `Save Division ${division}`}
+              </button>
+            </div>
+            {hhResult && <ResultBanner result={hhResult} onDismiss={() => setHhResult(null)} />}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function AdminPanel({ seasons, secret }: { seasons: Season[]; secret: string }) {
@@ -373,9 +616,10 @@ export default function AdminPanel({ seasons, secret }: { seasons: Season[]; sec
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-6">
       <TabBar active={tab} onChange={setTab} />
-      {tab === "posts"   ? <PostsTab secret={secret} /> :
-       tab === "refresh" ? <RefreshTab seasons={seasons} secret={secret} /> :
-                           <ContentTab secret={secret} />}
+      {tab === "posts"    ? <PostsTab secret={secret} /> :
+       tab === "refresh"  ? <RefreshTab seasons={seasons} secret={secret} /> :
+       tab === "scoring"  ? <ScoringTab seasons={seasons} secret={secret} /> :
+                            <ContentTab secret={secret} />}
     </div>
   );
 }

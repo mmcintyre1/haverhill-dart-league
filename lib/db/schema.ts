@@ -220,6 +220,21 @@ export const siteContent = pgTable("site_content", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ─── Scoring Config (extensible key/value, scoped to global or season + division) ──
+
+export const scoringConfig = pgTable(
+  "scoring_config",
+  {
+    id: serial("id").primaryKey(),
+    scope: text("scope").notNull().default("global"), // "global" | "<seasonId>"
+    division: text("division"),                        // null = all divisions
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("scoring_config_scope_div_key_idx").on(t.scope, t.division, t.key)]
+);
+
 // ─── Scrape Log ───────────────────────────────────────────────────────────────
 
 export const scrapeLog = pgTable("scrape_log", {
