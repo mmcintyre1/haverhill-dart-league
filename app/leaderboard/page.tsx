@@ -6,7 +6,6 @@ import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardT
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import PhaseSelector from "@/components/PhaseSelector";
-import RefreshButton from "@/components/RefreshButton";
 
 export const dynamic = "force-dynamic";
 
@@ -135,29 +134,26 @@ export default async function LeaderboardPage({
             </Suspense>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          {lastScraped && (
-            <span className="text-xs text-slate-400">
-              Last updated:{" "}
-              {new Intl.DateTimeFormat("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-                timeZone: "America/New_York",
-              }).format(lastScraped)}{" "}
-              ET
-            </span>
-          )}
-          <RefreshButton />
-        </div>
+        {lastScraped && (
+          <span className="text-xs text-slate-400">
+            Last updated:{" "}
+            {new Intl.DateTimeFormat("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              timeZone: "America/New_York",
+            }).format(lastScraped)}{" "}
+            ET
+          </span>
+        )}
       </div>
 
       {allSeasons.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-600 py-16 text-center text-slate-400">
           <p className="font-medium">No data yet</p>
           <p className="mt-1 text-sm">
-            Click &ldquo;Refresh Data&rdquo; to pull the latest from DartConnect.
+            Run a data refresh from the admin panel to load the latest from DartConnect.
           </p>
         </div>
       ) : (
