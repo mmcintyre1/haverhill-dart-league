@@ -143,7 +143,7 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={rows} />
+        <LeaderboardTable rows={rows} seasonId={activeId} />
       )}
     </div>
   );

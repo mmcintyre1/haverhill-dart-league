@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { db, seasons, players, playerStats, playerWeekStats } from "@/lib/db";
+import { db, seasons, players, playerStats, playerWeekStats, playerSeasonTeams } from "@/lib/db";
 import { eq, and, asc, desc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 
@@ -19,7 +19,8 @@ async function getPlayerHeader(playerId: number, seasonId: number) {
 
   const [stat] = await db
     .select({
-      teamName: playerStats.teamName,
+      teamName: playerSeasonTeams.teamName,
+      divisionName: playerSeasonTeams.divisionName,
       setWins: playerStats.pts,
       wp: playerStats.wp,
       crkt: playerStats.crkt,
@@ -31,6 +32,13 @@ async function getPlayerHeader(playerId: number, seasonId: number) {
       ppr: playerStats.ppr,
     })
     .from(playerStats)
+    .leftJoin(
+      playerSeasonTeams,
+      and(
+        eq(playerStats.playerId, playerSeasonTeams.playerId),
+        eq(playerStats.seasonId, playerSeasonTeams.seasonId)
+      )
+    )
     .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId)))
     .limit(1);
 
@@ -93,8 +101,8 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">Player not found.</div>;
   }
 
-  // Sort weeks chronologically ("D Mon YYYY" doesn't sort correctly as a string)
-  const weeks = [...weeksRaw].sort((a, b) => parseWeekKey(a.weekKey) - parseWeekKey(b.weekKey));
+  // Sort weeks most recent first
+  const weeks = [...weeksRaw].sort((a, b) => parseWeekKey(b.weekKey) - parseWeekKey(a.weekKey));
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
   const seasonName = allSeasons.find((s) => s.id === activeId)?.name ?? "";
@@ -115,7 +123,7 @@ export default async function PlayerPage({
     <div>
       {/* Back link */}
       <div className="mb-5">
-        <Link href="/" className="text-sm text-slate-400 hover:text-amber-400 transition-colors">
+        <Link href={`/leaderboard?season=${activeId}`} className="text-sm text-slate-400 hover:text-amber-400 transition-colors">
           ← Leaderboard
         </Link>
       </div>
@@ -125,8 +133,12 @@ export default async function PlayerPage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold text-white">{player.name}</h2>
-            {stat?.teamName && (
-              <p className="text-slate-500 text-sm mt-0.5">{stat.teamName} · {seasonName}</p>
+            {(stat?.teamName || seasonName) && (
+              <p className="text-slate-500 text-sm mt-0.5">
+                {[stat?.teamName, stat?.divisionName ? `Div ${stat.divisionName}` : null, seasonName]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
             )}
           </div>
           <Suspense fallback={null}>
