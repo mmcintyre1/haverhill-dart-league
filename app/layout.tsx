@@ -24,7 +24,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-screen bg-[#0a0f1e] text-slate-200 antialiased">
-        <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0 z-10">
+        <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0 z-10 relative">
           {/* Amber accent line */}
           <div className="h-[2px] bg-gradient-to-r from-amber-600 via-amber-400 to-amber-600" />
           <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
