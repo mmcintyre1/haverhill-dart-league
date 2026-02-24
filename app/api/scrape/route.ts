@@ -210,6 +210,32 @@ async function backfillArchivedMetadata(
   debug.archivedSeasonsProcessed = ok;
 }
 
+/** Convert "27 Jan 2026" weekKey format → "2026-01-27" (schedDate format) */
+function weekKeyToISODate(weekKey: string): string | null {
+  const M: Record<string, string> = {
+    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",
+    Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
+  };
+  const [d, m, y] = weekKey.split(" ");
+  const mn = M[m];
+  if (!mn || !d || !y) return null;
+  return `${y}-${mn}-${d.padStart(2, "0")}`;
+}
+
+/**
+ * Generate a stable negative integer from a GUID string.
+ * Used as a synthetic PK for history-sourced match records that have no
+ * DC league_match_id (real DC IDs are large positive integers, so negatives
+ * never conflict).
+ */
+function guidToFakeId(guid: string): number {
+  let h = 0;
+  for (const c of guid) {
+    h = (h * 31 + c.charCodeAt(0)) | 0; // keep 32-bit signed
+  }
+  return h < 0 ? h : ~h; // always negative
+}
+
 // ── scrapeSeasonStats ─────────────────────────────────────────────────────────
 // Full stats pipeline for a single season: rosters, match histories, game
 // segments, player stats. Works for both the active season and archived seasons.
@@ -554,6 +580,14 @@ async function scrapeSeasonStats(
     }
     if (homeSetWins + awaySetWins === 0) continue;
 
+    const homeComp = teamCompetitors.find((t) => String(t.id) === meta.homeTeamId);
+    const awayComp  = teamCompetitors.find((t) => String(t.id) === meta.awayTeamId);
+    const homeTeamNameStr = String(homeComp?.team_name ?? homeComp?.name ?? "");
+    const awayTeamNameStr = String(awayComp?.team_name  ?? awayComp?.name  ?? "");
+    const parsedDate = weekKeyToISODate(meta.weekKey);
+
+    // Primary: update lineups-sourced records that already have both team IDs
+    // (future rounds where the full matchup was stored by the lineups API).
     await db
       .update(matches)
       .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", dcGuid: guid, updatedAt: new Date() })
@@ -562,6 +596,38 @@ async function scrapeSeasonStats(
         eq(matches.homeTeamId, homeSerialId),
         eq(matches.awayTeamId, awaySerialId),
       ));
+
+    // Upsert by dcGuid: inserts a new record for matches the lineups API never stored
+    // (past rounds where the lineups API only kept the BYE team's placeholder row, and
+    // archived seasons where the lineups API returns nothing at all).
+    // For records already updated above, the unique dcGuid index triggers an idempotent
+    // conflict-update — no duplicate rows are created.
+    await db
+      .insert(matches)
+      .values({
+        id: guidToFakeId(guid),
+        seasonId: targetSeasonId,
+        homeTeamId: homeSerialId,
+        awayTeamId: awaySerialId,
+        homeTeamName: homeTeamNameStr,
+        awayTeamName: awayTeamNameStr,
+        schedDate: parsedDate,
+        status: "C",
+        homeScore: homeSetWins,
+        awayScore: awaySetWins,
+        dcGuid: guid,
+      })
+      .onConflictDoUpdate({
+        target: matches.dcGuid,
+        set: {
+          homeScore: homeSetWins,
+          awayScore: awaySetWins,
+          status: "C",
+          awayTeamId: awaySerialId,
+          awayTeamName: awayTeamNameStr,
+          updatedAt: new Date(),
+        },
+      });
     matchScoresUpdated++;
   }
   debug.matchScoresUpdated = matchScoresUpdated;

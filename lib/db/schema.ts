@@ -116,29 +116,33 @@ export const playerStats = pgTable(
 
 // ─── Matches / Schedule ───────────────────────────────────────────────────────
 
-export const matches = pgTable("matches", {
-  id: integer("id").primaryKey(), // DartConnect league_match_id
-  seasonId: integer("season_id")
-    .notNull()
-    .references(() => seasons.id),
-  divisionId: integer("division_id").references(() => divisions.id),
-  divisionName: text("division_name"),
-  roundSeq: integer("round_seq"),
-  homeTeamId: integer("home_team_id").references(() => teams.id),
-  awayTeamId: integer("away_team_id").references(() => teams.id),
-  homeTeamName: text("home_team_name"),
-  awayTeamName: text("away_team_name"),
-  schedDate: date("sched_date"),
-  schedTime: time("sched_time"),
-  status: text("status").notNull().default("P"), // "P" = pending, "C" = complete
-  homeScore: integer("home_score").default(0),
-  awayScore: integer("away_score").default(0),
-  dcMatchId: integer("dc_match_id"),     // null until played on boards
-  dcGuid: text("dc_guid"),              // hex GUID for recap.dartconnect.com/games/{guid}
-  seasonStatus: text("season_status"),   // "REG" or "POST"
-  prettyDate: text("pretty_date"),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const matches = pgTable(
+  "matches",
+  {
+    id: integer("id").primaryKey(), // DC league_match_id (negative synthetic for history-only rows)
+    seasonId: integer("season_id")
+      .notNull()
+      .references(() => seasons.id),
+    divisionId: integer("division_id").references(() => divisions.id),
+    divisionName: text("division_name"),
+    roundSeq: integer("round_seq"),
+    homeTeamId: integer("home_team_id").references(() => teams.id),
+    awayTeamId: integer("away_team_id").references(() => teams.id),
+    homeTeamName: text("home_team_name"),
+    awayTeamName: text("away_team_name"),
+    schedDate: date("sched_date"),
+    schedTime: time("sched_time"),
+    status: text("status").notNull().default("P"), // "P" = pending, "C" = complete
+    homeScore: integer("home_score").default(0),
+    awayScore: integer("away_score").default(0),
+    dcMatchId: integer("dc_match_id"),     // null until played on boards
+    dcGuid: text("dc_guid"),              // hex GUID for recap.dartconnect.com/games/{guid}
+    seasonStatus: text("season_status"),   // "REG" or "POST"
+    prettyDate: text("pretty_date"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("matches_dc_guid_idx").on(t.dcGuid)]
+);
 
 // ─── Player Week Stats (one row per player per week per season) ───────────────
 
