@@ -108,7 +108,7 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
       <table className="w-full text-sm border-collapse">
         <thead>
           {/* Column group headers */}
-          <tr className="bg-slate-900/50 border-b border-slate-700/30">
+          <tr className="bg-slate-950/80 border-b border-slate-700/30">
             <th colSpan={5} className="px-2 py-1" />
             <th colSpan={4} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
               Records
@@ -123,7 +123,7 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
               Summary
             </th>
           </tr>
-          <tr className="bg-slate-900 border-b border-slate-700/80">
+          <tr className="bg-slate-950 border-b border-slate-700/80">
             {COLUMNS.map((col) => (
               <th
                 key={col.key}
@@ -170,7 +170,7 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.hundredPlus ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.oneEighty ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.hOut ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-sky-400 tabular-nums font-medium">
+              <td className="px-2 py-1.5 text-center text-amber-300 tabular-nums font-medium">
                 {row.ppr != null ? parseFloat(row.ppr).toFixed(1) : "—"}
               </td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.zeroOneHh ?? "—"}</td>
@@ -184,7 +184,7 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.roHh ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.ro6b ?? "—"}</td>
               {/* Summary */}
-              <td className="px-2 py-1.5 text-center text-sky-400 font-medium tabular-nums border-l border-slate-800">
+              <td className="px-2 py-1.5 text-center text-amber-300 font-medium tabular-nums border-l border-slate-800">
                 {row.avg != null
                   ? `${(parseFloat(row.avg) * 100).toFixed(1)}%`
                   : "—"}

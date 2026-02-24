@@ -82,7 +82,7 @@ export default async function HomePage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Hero */}
         <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl">
-          <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-slate-900/80 pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-br from-amber-600/20 via-transparent to-transparent pointer-events-none" />
           <div className="relative px-8 py-10 flex flex-col h-full">
             <div>
               <div className="flex items-center gap-3 mb-3">
