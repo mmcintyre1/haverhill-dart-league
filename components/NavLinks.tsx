@@ -8,6 +8,7 @@ const NAV = [
   { href: "/leaderboard", label: "Leaderboard" },
   { href: "/standings", label: "Standings" },
   { href: "/matches", label: "Matches" },
+  { href: "/about", label: "About" },
 ];
 
 export default function NavLinks() {

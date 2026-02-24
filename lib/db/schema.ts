@@ -212,6 +212,14 @@ export const newsPosts = pgTable("news_posts", {
   publishedAt: timestamp("published_at").notNull().defaultNow(),
 });
 
+// ─── Site Content (admin-editable key/value store) ────────────────────────────
+
+export const siteContent = pgTable("site_content", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ─── Scrape Log ───────────────────────────────────────────────────────────────
 
 export const scrapeLog = pgTable("scrape_log", {
