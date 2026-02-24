@@ -106,10 +106,11 @@ export const playerStats = pgTable(
     ppr: numeric("ppr", { precision: 6, scale: 2 }),
     avg: numeric("avg", { precision: 6, scale: 3 }),
     pts: integer("pts"),
+    phase: text("phase").notNull().default("REG"), // "REG" | "POST"
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("player_stats_season_player_idx").on(t.seasonId, t.playerId),
+    uniqueIndex("player_stats_season_player_phase_idx").on(t.seasonId, t.playerId, t.phase),
   ]
 );
 
@@ -168,9 +169,10 @@ export const playerWeekStats = pgTable(
     rnds: integer("rnds").notNull().default(0),
     mpr: numeric("mpr", { precision: 5, scale: 2 }),
     ppr: numeric("ppr", { precision: 6, scale: 2 }),
+    phase: text("phase").notNull().default("REG"), // "REG" | "POST"
   },
   (t) => [
-    uniqueIndex("player_week_stats_idx").on(t.seasonId, t.playerId, t.weekKey),
+    uniqueIndex("player_week_stats_idx").on(t.seasonId, t.playerId, t.weekKey, t.phase),
   ]
 );
 

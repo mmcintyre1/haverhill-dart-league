@@ -323,11 +323,12 @@ export type DCGameSegments = DCGameLeg[][];
 export async function fetchTeamMatchHistory(
   seasonId: number,
   teamId: string,
-  cookies: { xsrf: string; session: string }
+  cookies: { xsrf: string; session: string },
+  seasonStatus: "REG" | "POST" = "REG"
 ): Promise<DCMatchHistoryEntry[]> {
   const res = await dcPost<{ matches?: unknown[] }>(
     `/api/league/${LEAGUE_ID}/standings/${seasonId}/matches`,
-    { season_status: "REG", opponent_guid: teamId },
+    { season_status: seasonStatus, opponent_guid: teamId },
     cookies
   );
   return (res.matches ?? []) as DCMatchHistoryEntry[];

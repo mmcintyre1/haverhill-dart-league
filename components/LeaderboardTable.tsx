@@ -69,7 +69,7 @@ function numericSort(a: LeaderboardRow, b: LeaderboardRow, key: SortKey, dir: 1 
   return (bv - av) * dir;
 }
 
-export default function LeaderboardTable({ rows, seasonId }: { rows: LeaderboardRow[]; seasonId?: number }) {
+export default function LeaderboardTable({ rows, seasonId, phase }: { rows: LeaderboardRow[]; seasonId?: number; phase?: string }) {
   const [sortKey, setSortKey] = useState<SortKey>("pts");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
@@ -138,7 +138,7 @@ export default function LeaderboardTable({ rows, seasonId }: { rows: Leaderboard
               {/* Identity */}
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.pos ?? i + 1}</td>
               <td className="px-2 py-1.5 whitespace-nowrap">
-                <Link href={`/players/${row.id}${seasonId ? `?season=${seasonId}` : ""}`} className="font-semibold text-slate-100 hover:text-amber-400 transition-colors">
+                <Link href={`/players/${row.id}${seasonId ? `?season=${seasonId}` : ""}${phase && phase !== "REG" ? `${seasonId ? "&" : "?"}phase=${phase}` : ""}`} className="font-semibold text-slate-100 hover:text-amber-400 transition-colors">
                   {row.playerName}
                 </Link>
               </td>

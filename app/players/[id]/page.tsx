@@ -10,7 +10,7 @@ async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
 }
 
-async function getPlayerHeader(playerId: number, seasonId: number) {
+async function getPlayerHeader(playerId: number, seasonId: number, phase: string) {
   const [player] = await db
     .select({ name: players.name })
     .from(players)
@@ -39,17 +39,17 @@ async function getPlayerHeader(playerId: number, seasonId: number) {
         eq(playerStats.seasonId, playerSeasonTeams.seasonId)
       )
     )
-    .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId)))
+    .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase)))
     .limit(1);
 
   return { player, stat };
 }
 
-async function getWeeklyRows(playerId: number, seasonId: number) {
+async function getWeeklyRows(playerId: number, seasonId: number, phase: string) {
   return db
     .select()
     .from(playerWeekStats)
-    .where(and(eq(playerWeekStats.playerId, playerId), eq(playerWeekStats.seasonId, seasonId)))
+    .where(and(eq(playerWeekStats.playerId, playerId), eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase)))
     .orderBy(asc(playerWeekStats.weekKey));
 }
 
@@ -73,7 +73,7 @@ export default async function PlayerPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ season?: string }>;
+  searchParams: Promise<{ season?: string; phase?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -87,14 +87,15 @@ export default async function PlayerPage({
   const activeId = sp.season
     ? parseInt(sp.season)
     : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
+  const phase = sp.phase ?? "REG";
 
   if (!activeId) {
     return <div className="text-slate-400 py-16 text-center">No seasons available.</div>;
   }
 
   const [{ player, stat }, weeksRaw] = await Promise.all([
-    getPlayerHeader(playerId, activeId),
-    getWeeklyRows(playerId, activeId),
+    getPlayerHeader(playerId, activeId, phase),
+    getWeeklyRows(playerId, activeId, phase),
   ]);
 
   if (!player) {

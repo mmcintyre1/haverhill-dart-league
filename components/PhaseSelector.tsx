@@ -2,40 +2,24 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 
-export interface SeasonOption {
-  id: number;
-  name: string;
-}
-
-export default function SeasonSelector({
-  seasons,
-  currentId,
-}: {
-  seasons: SeasonOption[];
-  currentId: number | null;
-}) {
+export default function PhaseSelector({ current }: { current: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(searchParams.toString());
-    params.set("season", e.target.value);
-    params.delete("division");
-    params.delete("phase");
+    params.set("phase", e.target.value);
     router.push(`?${params.toString()}`);
   }
 
   return (
     <select
-      value={currentId ?? ""}
+      value={current}
       onChange={onChange}
       className="rounded border border-slate-600 bg-slate-700 px-3 py-1.5 text-sm text-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
     >
-      {seasons.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.name}
-        </option>
-      ))}
+      <option value="REG">Regular Season</option>
+      <option value="POST">Postseason</option>
     </select>
   );
 }

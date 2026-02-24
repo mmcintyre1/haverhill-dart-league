@@ -5,6 +5,7 @@ import { eq, and, desc, asc } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
+import PhaseSelector from "@/components/PhaseSelector";
 import RefreshButton from "@/components/RefreshButton";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +23,19 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
   return rows.map((r) => r.name).filter(Boolean) as string[];
 }
 
+async function hasPostseason(seasonId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ id: playerStats.id })
+    .from(playerStats)
+    .where(and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "POST")))
+    .limit(1);
+  return !!row;
+}
+
 async function getLeaderboard(
   seasonId: number,
-  divisionFilter: string | null
+  divisionFilter: string | null,
+  phase: string
 ): Promise<LeaderboardRow[]> {
   const query = db
     .select({
@@ -63,8 +74,8 @@ async function getLeaderboard(
     )
     .where(
       divisionFilter
-        ? and(eq(playerStats.seasonId, seasonId), eq(playerSeasonTeams.divisionName, divisionFilter))
-        : eq(playerStats.seasonId, seasonId)
+        ? and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase), eq(playerSeasonTeams.divisionName, divisionFilter))
+        : and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase))
     )
     .orderBy(asc(playerStats.pos));
 
@@ -83,7 +94,7 @@ async function getLastScraped(seasonId: number): Promise<Date | null> {
 export default async function LeaderboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ season?: string; division?: string }>;
+  searchParams: Promise<{ season?: string; division?: string; phase?: string }>;
 }) {
   const params = await searchParams;
   const allSeasons = await getSeasons();
@@ -94,11 +105,13 @@ export default async function LeaderboardPage({
       : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
 
   const divisionFilter = params.division ?? null;
+  const phase = params.phase ?? "REG";
 
-  const [rows, lastScraped, divisionList] = await Promise.all([
-    activeId ? getLeaderboard(activeId, divisionFilter) : Promise.resolve([]),
+  const [rows, lastScraped, divisionList, postExists] = await Promise.all([
+    activeId ? getLeaderboard(activeId, divisionFilter, phase) : Promise.resolve([]),
     activeId ? getLastScraped(activeId) : Promise.resolve(null),
     activeId ? getDivisionsForSeason(activeId) : Promise.resolve([]),
+    activeId ? hasPostseason(activeId) : Promise.resolve(false),
   ]);
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
@@ -114,6 +127,11 @@ export default async function LeaderboardPage({
           {divisionList.length > 1 && (
             <Suspense fallback={null}>
               <DivisionSelector divisions={divisionList} current={divisionFilter ?? "all"} />
+            </Suspense>
+          )}
+          {postExists && (
+            <Suspense fallback={null}>
+              <PhaseSelector current={phase} />
             </Suspense>
           )}
         </div>
@@ -143,7 +161,7 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={rows} seasonId={activeId} />
+        <LeaderboardTable rows={rows} seasonId={activeId} phase={phase} />
       )}
     </div>
   );
