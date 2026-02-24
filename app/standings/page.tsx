@@ -251,10 +251,11 @@ export default async function StandingsPage({
                     {row.matchRows.length > 0 && (
                       <div className="border-t border-slate-800/50 bg-slate-950/50">
                         <div className="flex items-center pl-12 pr-4 py-1.5 text-[0.6rem] uppercase tracking-wider text-slate-600 border-b border-slate-800/40">
-                          <div className="w-28">Date</div>
-                          <div className="flex-1">Opponent</div>
-                          <div className="w-20 text-center">Result</div>
-                          <div className="w-6" />
+                          <div className="flex-1 flex items-center gap-3">
+                            <div className="w-28 shrink-0">Date</div>
+                            <div>Opponent</div>
+                          </div>
+                          <div className="shrink-0">Result</div>
                         </div>
                         {row.matchRows.map((m, mi) => {
                           const won = m.teamScore > m.opponentScore;
@@ -263,18 +264,16 @@ export default async function StandingsPage({
                               key={mi}
                               className="flex items-center pl-12 pr-4 py-1.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors"
                             >
-                              <div className="w-28 text-xs text-slate-500 tabular-nums truncate">
-                                {m.weekLabel || "—"}
+                              <div className="flex-1 flex items-center gap-3 min-w-0">
+                                <span className="w-28 shrink-0 text-xs text-slate-500 tabular-nums">{m.weekLabel || "—"}</span>
+                                <span className="text-xs text-slate-300 truncate">{m.opponent}</span>
                               </div>
-                              <div className="flex-1 text-xs text-slate-300 truncate">{m.opponent}</div>
-                              <div className="w-20 flex justify-center">
+                              <div className="flex items-center gap-2 shrink-0 ml-3">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.65rem] font-semibold tabular-nums ${
                                   won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
                                 }`}>
                                   {won ? "W" : "L"} {m.teamScore}–{m.opponentScore}
                                 </span>
-                              </div>
-                              <div className="w-6 text-center">
                                 {m.dcGuid && (
                                   <a
                                     href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
