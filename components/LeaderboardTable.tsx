@@ -107,6 +107,25 @@ export default function LeaderboardTable({ rows, seasonId, phase }: { rows: Lead
     <div className="overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
       <table className="w-full text-sm border-collapse">
         <thead>
+          {/* Column group headers */}
+          <tr className="bg-slate-900/50 border-b border-slate-700/30">
+            <th colSpan={5} className="px-2 py-1" />
+            <th colSpan={3} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+              Records
+            </th>
+            <th colSpan={4} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+              01 Games
+            </th>
+            <th colSpan={3} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+              Cricket
+            </th>
+            <th colSpan={5} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">
+              Misc
+            </th>
+            <th colSpan={2} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-amber-600/70 border-l border-slate-700/60 font-semibold">
+              Summary
+            </th>
+          </tr>
           <tr className="bg-slate-900 border-b border-slate-700/80">
             {COLUMNS.map((col) => (
               <th
