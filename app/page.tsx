@@ -78,38 +78,88 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-10">
-      {/* ── Hero ── */}
-      <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl">
-        <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-slate-900/80 pointer-events-none" />
-        <div className="relative px-8 py-12 sm:py-16">
-          <div className="flex items-center gap-3 mb-3">
-            <span className="text-amber-400 text-3xl select-none">◎</span>
-            <span className="text-xs font-semibold uppercase tracking-widest text-amber-500">
-              Haverhill Dart League
-            </span>
+      {/* ── Hero + News (side-by-side on desktop, stacked on mobile) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Hero */}
+        <div className="relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl">
+          <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-slate-900/80 pointer-events-none" />
+          <div className="relative px-8 py-10 flex flex-col h-full">
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-amber-400 text-3xl select-none">◎</span>
+                <span className="text-xs font-semibold uppercase tracking-widest text-amber-500">
+                  Haverhill Dart League
+                </span>
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-3">
+                Home of Tuesday Night Darts
+              </h1>
+              <p className="text-slate-400 text-base">
+                {season
+                  ? `${season.name} is underway. Follow standings, results, and player stats all season long.`
+                  : "Stats, schedules, and results for every week of the season."}
+              </p>
+            </div>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/leaderboard"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-semibold px-4 py-2 transition-colors"
+              >
+                View Leaderboard →
+              </Link>
+              <Link
+                href="/matches"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium px-4 py-2 border border-slate-700 transition-colors"
+              >
+                This Week's Matches
+              </Link>
+              {season && process.env.DC_LEAGUE_ID && (
+                <a
+                  href={`https://tv.dartconnect.com/league/${process.env.DC_LEAGUE_ID}/${season.id}/standings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-sm font-medium px-4 py-2 border border-slate-700 transition-colors"
+                >
+                  DartConnect ↗
+                </a>
+              )}
+            </div>
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-white leading-tight mb-3">
-            Home of Tuesday Night Darts
-          </h1>
-          <p className="text-slate-400 text-base max-w-lg">
-            {season
-              ? `${season.name} is underway. Follow standings, results, and player stats all season long.`
-              : "Stats, schedules, and results for every week of the season."}
-          </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/leaderboard"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-semibold px-4 py-2 transition-colors"
-            >
-              View Leaderboard →
-            </Link>
-            <Link
-              href="/matches"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium px-4 py-2 border border-slate-700 transition-colors"
-            >
-              This Week's Matches
-            </Link>
+        </div>
+
+        {/* News */}
+        <div className="flex flex-col">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-lg font-semibold text-slate-100">News &amp; Announcements</h2>
+            <div className="flex-1 h-px bg-slate-800" />
           </div>
+
+          {news.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-700 py-14 text-center text-slate-500 flex-1 flex flex-col items-center justify-center">
+              <p className="font-medium text-slate-400">Stay tuned for announcements</p>
+              <p className="text-sm mt-1">League news and updates will appear here throughout the season.</p>
+            </div>
+          ) : (
+            <div className="space-y-4 overflow-y-auto max-h-[420px] pr-1">
+              {news.map((post) => (
+                <article
+                  key={post.id}
+                  className="rounded-xl border border-slate-800 bg-slate-900 p-5 hover:border-slate-700 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-4 mb-2">
+                    <h3 className="text-base font-semibold text-white leading-snug">{post.title}</h3>
+                    <time className="text-xs text-slate-500 shrink-0 mt-0.5">
+                      {formatDate(post.publishedAt)}
+                    </time>
+                  </div>
+                  <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">{post.body}</p>
+                  {post.author && (
+                    <p className="mt-3 text-xs text-slate-600">— {post.author}</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -191,41 +241,6 @@ export default async function HomePage() {
           )}
         </div>
       )}
-
-      {/* ── News ── */}
-      <div>
-        <div className="flex items-center gap-3 mb-4">
-          <h2 className="text-lg font-semibold text-slate-100">News &amp; Announcements</h2>
-          <div className="flex-1 h-px bg-slate-800" />
-        </div>
-
-        {news.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-700 py-14 text-center text-slate-500">
-            <p className="font-medium text-slate-400">Stay tuned for announcements</p>
-            <p className="text-sm mt-1">League news and updates will appear here throughout the season.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {news.map((post) => (
-              <article
-                key={post.id}
-                className="rounded-xl border border-slate-800 bg-slate-900 p-5 hover:border-slate-700 transition-colors"
-              >
-                <div className="flex items-start justify-between gap-4 mb-2">
-                  <h3 className="text-base font-semibold text-white leading-snug">{post.title}</h3>
-                  <time className="text-xs text-slate-500 shrink-0 mt-0.5">
-                    {formatDate(post.publishedAt)}
-                  </time>
-                </div>
-                <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">{post.body}</p>
-                {post.author && (
-                  <p className="mt-3 text-xs text-slate-600">— {post.author}</p>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
