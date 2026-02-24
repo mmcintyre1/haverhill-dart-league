@@ -278,7 +278,9 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
               <td className="px-2 py-1.5 text-center text-amber-300 tabular-nums font-medium">
                 {row.ppr != null ? parseFloat(row.ppr).toFixed(1) : "—"}
               </td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.zeroOneHh ?? "—"}</td>
+              <td className={`px-2 py-1.5 text-center tabular-nums ${row.zeroOneHh != null ? "text-rose-400 font-semibold" : "text-slate-400"}`}>
+                {row.zeroOneHh != null ? `${row.zeroOneHh} 🔥` : "—"}
+              </td>
               <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.ldg ?? "—"}</td>
               {/* Cricket */}
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{row.rnds ?? "—"}</td>
@@ -286,7 +288,9 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
               <td className="px-2 py-1.5 text-center text-emerald-400 tabular-nums font-medium">
                 {row.mpr != null ? parseFloat(row.mpr).toFixed(2) : "—"}
               </td>
-              <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.roHh ?? "—"}</td>
+              <td className={`px-2 py-1.5 text-center tabular-nums ${row.roHh != null ? "text-rose-400 font-semibold" : "text-slate-500"}`}>
+                {row.roHh != null ? `${row.roHh} 🔥` : "—"}
+              </td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.ro6b ?? "—"}</td>
               {/* Summary */}
               <td className="px-2 py-1.5 text-center text-amber-300 font-medium tabular-nums border-l border-slate-800">
