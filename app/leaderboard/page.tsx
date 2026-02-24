@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { db, seasons, playerStats, players, playerSeasonTeams, scoringConfig } from "@/lib/db";
+import { db, seasons, playerStats, players, playerSeasonTeams, scoringConfig, playerWeekStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
 import { eq, and, desc, asc, or, isNull } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
@@ -105,6 +105,59 @@ async function getScoringPts(seasonId: number): Promise<ScoringPts> {
   return pts;
 }
 
+// Default hot hand thresholds per division (01 HH ton points, RO HH cricket marks)
+const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
+  A: { hh: 475, roHh: 20 },
+  B: { hh: 450, roHh: 17 },
+  C: { hh: 425, roHh: 14 },
+  D: { hh: 400, roHh: 12 },
+};
+
+async function getHhThresholds(
+  seasonId: number
+): Promise<Record<string, { hh: number; roHh: number }>> {
+  const rows = await db
+    .select()
+    .from(scoringConfig)
+    .where(
+      and(
+        or(eq(scoringConfig.scope, "global"), eq(scoringConfig.scope, String(seasonId))),
+        or(eq(scoringConfig.key, "01_hh.threshold"), eq(scoringConfig.key, "ro_hh.threshold"))
+      )
+    );
+
+  // Build per-division map; season rows override global rows
+  const result: Record<string, { hh: number; roHh: number }> = {};
+  const globalRows = rows.filter((r) => r.scope === "global");
+  const seasonRows = rows.filter((r) => r.scope !== "global");
+
+  for (const r of [...globalRows, ...seasonRows]) {
+    const div = r.division ?? "";
+    if (!result[div]) result[div] = { ...DEFAULT_HH[div] ?? { hh: 475, roHh: 20 } };
+    if (r.key === "01_hh.threshold") result[div].hh = Number(r.value);
+    if (r.key === "ro_hh.threshold") result[div].roHh = Number(r.value);
+  }
+
+  return result;
+}
+
+async function getWeeklyStats(
+  seasonId: number,
+  phase: string
+): Promise<{ playerId: number; hundredPlus: number; rnds: number }[]> {
+  const rows = await db
+    .select({
+      playerId: playerWeekStats.playerId,
+      hundredPlus: playerWeekStats.hundredPlus,
+      rnds: playerWeekStats.rnds,
+    })
+    .from(playerWeekStats)
+    .where(
+      and(eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase))
+    );
+  return rows;
+}
+
 async function getLastScraped(seasonId: number): Promise<Date | null> {
   const [row] = await db
     .select({ lastScrapedAt: seasons.lastScrapedAt })
@@ -130,13 +183,45 @@ export default async function LeaderboardPage({
   const divisionFilter = params.division ?? null;
   const phase = params.phase ?? "REG";
 
-  const [rows, lastScraped, divisionList, postExists, scoringPts] = await Promise.all([
-    activeId ? getLeaderboard(activeId, divisionFilter, phase) : Promise.resolve([]),
-    activeId ? getLastScraped(activeId) : Promise.resolve(null),
-    activeId ? getDivisionsForSeason(activeId) : Promise.resolve([]),
-    activeId ? hasPostseason(activeId) : Promise.resolve(false),
-    activeId ? getScoringPts(activeId) : Promise.resolve({ cricket: 1, "601": 1, "501": 1 }),
-  ]);
+  const [rows, lastScraped, divisionList, postExists, scoringPts, hhThresholds, weeklyStats] =
+    await Promise.all([
+      activeId ? getLeaderboard(activeId, divisionFilter, phase) : Promise.resolve([]),
+      activeId ? getLastScraped(activeId) : Promise.resolve(null),
+      activeId ? getDivisionsForSeason(activeId) : Promise.resolve([]),
+      activeId ? hasPostseason(activeId) : Promise.resolve(false),
+      activeId ? getScoringPts(activeId) : Promise.resolve({ cricket: 1, "601": 1, "501": 1 }),
+      activeId ? getHhThresholds(activeId) : Promise.resolve({} as Record<string, { hh: number; roHh: number }>),
+      activeId ? getWeeklyStats(activeId, phase) : Promise.resolve([]),
+    ]);
+
+  // Group weekly stats by playerId
+  const weeksByPlayer = new Map<number, { hundredPlus: number; rnds: number }[]>();
+  for (const w of weeklyStats) {
+    const arr = weeksByPlayer.get(w.playerId) ?? [];
+    arr.push({ hundredPlus: w.hundredPlus, rnds: w.rnds });
+    weeksByPlayer.set(w.playerId, arr);
+  }
+
+  // Compute hot hand values and override DC-stored ones
+  const enrichedRows = rows.map((row) => {
+    const div = row.divisionName ?? "";
+    const thresholds =
+      hhThresholds[div] ?? hhThresholds[""] ?? DEFAULT_HH[div] ?? { hh: 475, roHh: 20 };
+    const weeks = weeksByPlayer.get(row.id) ?? [];
+
+    let zeroOneHh: number | null = null;
+    let roHh: number | null = null;
+    for (const w of weeks) {
+      if (w.hundredPlus >= thresholds.hh) {
+        zeroOneHh = zeroOneHh === null ? w.hundredPlus : Math.max(zeroOneHh, w.hundredPlus);
+      }
+      if (w.rnds >= thresholds.roHh) {
+        roHh = roHh === null ? w.rnds : Math.max(roHh, w.rnds);
+      }
+    }
+
+    return { ...row, zeroOneHh, roHh };
+  });
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
 
@@ -183,7 +268,7 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={rows} seasonId={activeId} phase={phase} scoringPts={scoringPts} />
+        <LeaderboardTable rows={enrichedRows} seasonId={activeId} phase={phase} scoringPts={scoringPts} />
       )}
     </div>
   );

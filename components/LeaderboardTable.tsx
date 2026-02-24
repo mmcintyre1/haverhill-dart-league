@@ -40,8 +40,8 @@ const COLUMNS: { key: SortKey; label: string; title?: string; sectionStart?: boo
   { key: "divisionName", label: "Div",  title: "Division" },
   { key: "wp",           label: "WP",   title: "Weeks Played" },
   // Records
-  { key: "crkt",       label: "CRKT",  title: "Cricket Record",              sectionStart: true },
-  { key: "col601",     label: "601" },
+  { key: "col601",     label: "601",                                          sectionStart: true },
+  { key: "crkt",       label: "CRKT",  title: "Cricket Record" },
   { key: "col501",     label: "501" },
   { key: "sos",        label: "SOS",   title: "Strength of Schedule" },
   // 01 Games
@@ -85,13 +85,29 @@ function computeCustomAvg(row: LeaderboardRow, sp: ScoringPts): number | null {
   return avail > 0 ? earned / avail : null;
 }
 
+function computeCustomPts(row: LeaderboardRow, sp: ScoringPts): number | null {
+  const crkt = parseRecord(row.crkt);
+  const r601 = parseRecord(row.col601);
+  const r501 = parseRecord(row.col501);
+  const avail = (crkt.w + crkt.l) + (r601.w + r601.l) + (r501.w + r501.l);
+  if (avail === 0) return null;
+  return crkt.w * sp.cricket + r601.w * sp["601"] + r501.w * sp["501"];
+}
+
 export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: { rows: LeaderboardRow[]; seasonId?: number; phase?: string; scoringPts?: ScoringPts }) {
   const [sortKey, setSortKey] = useState<SortKey>("pts");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
+  const sp = scoringPts ?? { cricket: 1, "601": 1, "501": 1 };
+
   const sorted = [...rows].sort((a, b) => {
     if (sortKey === "playerName" || sortKey === "teamName") {
       return (String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""))) * sortDir * -1;
+    }
+    if (sortKey === "pts") {
+      const av = computeCustomPts(a, sp) ?? 0;
+      const bv = computeCustomPts(b, sp) ?? 0;
+      return (bv - av) * sortDir;
     }
     return numericSort(a, b, sortKey, sortDir);
   });
@@ -179,8 +195,8 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
               <td className="px-2 py-1.5 text-center text-slate-500 text-xs">{row.divisionName ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.wp ?? "—"}</td>
               {/* Records */}
-              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums border-l border-slate-800">{row.crkt ?? "—"}</td>
-              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col601 ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{row.col601 ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center text-slate-300 tabular-nums">{row.crkt ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums">{row.col501 ?? "—"}</td>
               <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums">{row.sos ?? "—"}</td>
               {/* 01 Games */}
@@ -203,14 +219,19 @@ export default function LeaderboardTable({ rows, seasonId, phase, scoringPts }: 
               {/* Summary */}
               <td className="px-2 py-1.5 text-center text-amber-300 font-medium tabular-nums border-l border-slate-800">
                 {(() => {
-                  const sp = scoringPts ?? { cricket: 1, "601": 1, "501": 1 };
                   const customAvg = computeCustomAvg(row, sp);
                   return customAvg != null
                     ? `${(customAvg * 100).toFixed(1)}%`
                     : row.avg != null ? `${(parseFloat(row.avg) * 100).toFixed(1)}%` : "—";
                 })()}
               </td>
-              <td className="px-2 py-1.5 text-center font-bold text-amber-400 tabular-nums">{row.pts ?? "—"}</td>
+              <td className="px-2 py-1.5 text-center font-bold text-amber-400 tabular-nums">
+                {(() => {
+                  const v = computeCustomPts(row, sp);
+                  if (v == null) return row.pts ?? "—";
+                  return Number.isInteger(v) ? v : v.toFixed(1);
+                })()}
+              </td>
             </tr>
           ))}
         </tbody>
