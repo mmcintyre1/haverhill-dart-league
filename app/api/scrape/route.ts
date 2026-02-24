@@ -17,7 +17,7 @@ import {
   type DCPlayerStat,
   type DCMatchHistoryEntry,
   type DCGameLeg,
-  type DCMatchInfo,
+  type DCMatchData,
   type DCMatchPlayerStat,
   type DCSeason,
 } from "@/lib/dartconnect";
@@ -278,7 +278,9 @@ async function scrapeSeasonStats(
   type PlayerWithTeam = DCPlayerStat & { _teamName: string };
   const roster: PlayerWithTeam[] = [];
   const seenPlayerIds = new Set<number>();
-  const matchMeta = new Map<string, { homeTeamId: string; awayTeamId: string; weekKey: string }>();
+  const matchMeta = new Map<string, { homeTeamId: string; awayTeamId: string; weekKey: string; roundSeq: number | null }>();
+
+  let sampleHistoryEntry: unknown = null;
 
   for (const team of teamCompetitors) {
     const teamId = String(team.id);
@@ -294,24 +296,51 @@ async function scrapeSeasonStats(
         }
       }
       const c2 = await getCSRFCookies();
-      const history: DCMatchHistoryEntry[] = await fetchTeamMatchHistory(targetSeasonId, teamId, c2);
+      // Fetch raw so we can log all fields for investigation
+      const rawRes = await (async () => {
+        const { xsrf, session } = c2;
+        const xsrfDecoded = decodeURIComponent(xsrf);
+        const r = await fetch(`https://tv.dartconnect.com/api/league/${process.env.DC_LEAGUE_ID ?? "HaverDL"}/standings/${targetSeasonId}/matches`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-XSRF-TOKEN": xsrfDecoded,
+            Cookie: `XSRF-TOKEN=${xsrf}; ${session}`,
+            "User-Agent": "Mozilla/5.0",
+            Referer: `https://tv.dartconnect.com/league/${process.env.DC_LEAGUE_ID ?? "HaverDL"}`,
+          },
+          body: JSON.stringify({ season_status: "REG", opponent_guid: teamId }),
+        });
+        return r.ok ? (await r.json() as { matches?: unknown[] }) : { matches: [] };
+      })();
+      const rawMatches = rawRes.matches ?? [];
+      if (!sampleHistoryEntry && rawMatches.length > 0) {
+        sampleHistoryEntry = rawMatches[0]; // capture ALL fields from first entry
+      }
+      const history = rawMatches as DCMatchHistoryEntry[];
       for (const entry of history) {
         const guid = entry.match_id;
         if (!guid) continue;
+        const entryRoundSeq = entry.round_seq != null ? Number(entry.round_seq) : null;
         if (!matchMeta.has(guid)) {
           matchMeta.set(guid, {
             homeTeamId: entry.side === "Home" ? teamId : "__unknown__",
             awayTeamId: entry.side === "Away" ? teamId : "__unknown__",
             weekKey: entry.match_start_date ?? "",
+            roundSeq: entryRoundSeq,
           });
         } else {
           const meta = matchMeta.get(guid)!;
           if (meta.homeTeamId === "__unknown__") meta.homeTeamId = teamId;
           if (meta.awayTeamId === "__unknown__") meta.awayTeamId = teamId;
+          if (meta.roundSeq == null && entryRoundSeq != null) meta.roundSeq = entryRoundSeq;
         }
       }
     } catch { /* non-fatal per team */ }
   }
+
+  debug.sampleHistoryEntry = sampleHistoryEntry; // shows all DC history entry fields
 
   debug.rosterLength = roster.length;
   debug.uniqueMatchGuids = matchMeta.size;
@@ -322,24 +351,27 @@ async function scrapeSeasonStats(
   // All three are fetched in parallel per match.
   const guids = Array.from(matchMeta.keys());
   const segmentsMap = new Map<string, DCGameLeg[][]>();
-  const matchInfoMap = new Map<string, DCMatchInfo>();
+  const matchDataMap = new Map<string, DCMatchData>();
   const matchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();
 
   const segResults = await Promise.allSettled(
     guids.map(async (guid) => {
-      const [sets, matchInfo, pStats] = await Promise.allSettled([
+      const [sets, matchData, pStats] = await Promise.allSettled([
         fetchGameSegments(guid),
         fetchMatchData(guid),
         fetchMatchPlayerStats(guid),
       ]);
       if (sets.status === "fulfilled") segmentsMap.set(guid, sets.value);
-      if (matchInfo.status === "fulfilled") matchInfoMap.set(guid, matchInfo.value);
+      if (matchData.status === "fulfilled") matchDataMap.set(guid, matchData.value);
       if (pStats.status === "fulfilled") matchPlayerStatsMap.set(guid, pStats.value);
     })
   );
   debug.segmentsLoaded = segmentsMap.size;
   debug.matchPlayerStatsLoaded = matchPlayerStatsMap.size;
   debug.segmentsErrors = segResults.filter((r) => r.status === "rejected").length;
+  // Investigation: log prop keys from the first match recap
+  const firstMatchData = matchDataMap.values().next().value as DCMatchData | undefined;
+  if (firstMatchData) debug.sampleMatchPropKeys = firstMatchData.propKeys;
 
   // ── E. Build player accumulators from segments ──────────────────────────────
   const accumByName = new Map<string, PlayerAccum>();
@@ -512,6 +544,8 @@ async function scrapeSeasonStats(
   let matchesUpdated = 0;
   const divSerialIdByDcId = new Map<number, number>();
   const dcTeamToSerialId = new Map<number, number>(); // DC team integer ID → serial PK
+  // schedDate → roundSeq: used in step I to assign round numbers to history-sourced matches.
+  const dateToRoundSeq = new Map<string, number>();
 
   for (const m of matchList) {
     let divSerialId: number | null = null;
@@ -550,6 +584,13 @@ async function scrapeSeasonStats(
       }
     }
 
+    // Build date → round mapping — do this BEFORE the !m.id check so completed rounds
+    // that DC returns with id=0 still contribute their date→round entries.
+    if (m.round_seq != null) {
+      if (m.sched_date) dateToRoundSeq.set(m.sched_date, m.round_seq);
+      if (m.pretty_date) dateToRoundSeq.set(m.pretty_date, m.round_seq);
+    }
+
     if (!m.id) { matchesUpdated++; continue; }
 
     await db
@@ -558,6 +599,40 @@ async function scrapeSeasonStats(
       .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, updatedAt: new Date() } });
     matchesUpdated++;
   }
+
+  // Extend dateToRoundSeq backwards for completed rounds using weekly extrapolation.
+  // DC's lineups API only returns upcoming rounds. For completed rounds, infer the round
+  // number by counting how many exact 7-day multiples each history match date is before
+  // the first known upcoming round. Only infers when the gap is divisible by 7 exactly —
+  // if a past round was on a non-weekly interval it is left as null (safe fallback).
+  {
+    const isoEntries = Array.from(dateToRoundSeq.entries())
+      .filter(([k]) => /^\d{4}-/.test(k))
+      .sort(([a], [b]) => a.localeCompare(b));
+    if (isoEntries.length > 0) {
+      const [minDate, minRound] = isoEntries[0];
+      const minMs = new Date(minDate).getTime();
+      const inferred: Record<string, number> = {};
+      for (const meta of matchMeta.values()) {
+        const isoDate = weekKeyToISODate(meta.weekKey);
+        if (!isoDate || isoDate >= minDate || dateToRoundSeq.has(isoDate)) continue;
+        const daysBack = Math.round((minMs - new Date(isoDate).getTime()) / 86400000);
+        if (daysBack > 0 && daysBack % 7 === 0) {
+          const inferredRound = minRound - daysBack / 7;
+          if (inferredRound > 0) {
+            dateToRoundSeq.set(isoDate, inferredRound);
+            inferred[isoDate] = inferredRound;
+          }
+        }
+      }
+      if (Object.keys(inferred).length > 0) debug.inferredRounds = inferred;
+    }
+  }
+
+  // Log ALL unique ISO-date → round entries (skip pretty_date duplicates) for verification
+  debug.dateToRoundSeq = Object.fromEntries(
+    Array.from(dateToRoundSeq.entries()).filter(([k]) => /^\d{4}-/.test(k))
+  );
 
   // For archived seasons (empty lineups): look up existing team serial IDs from DB
   // so the match score update step below has the DC→serial mapping it needs.
@@ -592,12 +667,27 @@ async function scrapeSeasonStats(
     const awayComp  = teamCompetitors.find((t) => String(t.id) === meta.awayTeamId);
     const homeTeamNameStr = String(homeComp?.team_name ?? homeComp?.name ?? "");
     const awayTeamNameStr = String(awayComp?.team_name  ?? awayComp?.name  ?? "");
-    const parsedDate = weekKeyToISODate(meta.weekKey);
+
+    // Resolve round number — priority cascade:
+    //  1. round_seq directly from the history entry (DC doesn't include it — always null)
+    //  2. round_seq from /matches/ recap page props (DC doesn't include it — always null)
+    //  3. dateToRoundSeq keyed by ISO date (converted from weekKey)
+    //  4. dateToRoundSeq keyed by weekKey directly ("27 Jan 2026" = pretty_date format)
+    //     This is the most reliable fallback: lineups pretty_date == history match_start_date.
+    const matchData = matchDataMap.get(guid);
+    const parsedDate = matchData?.schedDate ?? weekKeyToISODate(meta.weekKey);
+    // DC doesn't expose round_seq in history entries or /matches/ page props.
+    // The only source is the lineups sched_date → round_seq mapping (dateToRoundSeq).
+    const roundSeq =
+      meta.roundSeq ??
+      matchData?.roundSeq ??
+      (parsedDate != null ? (dateToRoundSeq.get(parsedDate) ?? null) : null) ??
+      null;
 
     // Resolve authoritative score from matchInfo.opponents[].score — DC computes this
     // server-side and includes forfeited sets that are absent from segment data.
     // Fall back to segment-counted wins if matchInfo is unavailable.
-    const matchInfo = matchInfoMap.get(guid);
+    const matchInfo = matchData?.matchInfo;
     let homeScore = homeSetWins, awayScore = awaySetWins;
     if (matchInfo?.opponents && matchInfo.opponents.length >= 2) {
       // DC puts home team first (opponents[0] = home_label). Confirm by name match,
@@ -615,9 +705,11 @@ async function scrapeSeasonStats(
     }
 
     // Primary: update lineups-sourced records that already have both team IDs.
+    // Only update roundSeq when non-null — preserves the value set by the lineups
+    // insert in step H (DC doesn't return round numbers for completed matches).
     await db
       .update(matches)
-      .set({ homeScore, awayScore, status: "C", dcGuid: guid, updatedAt: new Date() })
+      .set({ homeScore, awayScore, ...(roundSeq != null ? { roundSeq } : {}), status: "C", dcGuid: guid, updatedAt: new Date() })
       .where(and(
         eq(matches.seasonId, targetSeasonId),
         eq(matches.homeTeamId, homeSerialId),
@@ -638,6 +730,7 @@ async function scrapeSeasonStats(
         awayTeamName: awayTeamNameStr,
         schedDate: parsedDate,
         prettyDate: meta.weekKey || null,
+        roundSeq,
         status: "C",
         homeScore,
         awayScore,
@@ -648,6 +741,8 @@ async function scrapeSeasonStats(
         set: {
           homeScore,
           awayScore,
+          ...(roundSeq != null ? { roundSeq } : {}),
+          prettyDate: meta.weekKey || null,
           status: "C",
           awayTeamId: awaySerialId,
           awayTeamName: awayTeamNameStr,
@@ -1244,7 +1339,7 @@ export async function POST(req: NextRequest) {
         const result = await scrapeSeasonStats(s.id, leagueGuid, seasonDebug);
         totalPlayersUpdated += result.playersUpdated;
         totalMatchesUpdated += result.matchesUpdated;
-        seasonResults[`${s.id}_${s.season}`] = { ok: true, ...result };
+        seasonResults[`${s.id}_${s.season}`] = { ok: true, ...result, debug: seasonDebug };
       } catch (e) {
         seasonResults[`${s.id}_${s.season}`] = {
           ok: false,

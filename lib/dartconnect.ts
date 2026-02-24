@@ -285,6 +285,10 @@ export interface DCMatchHistoryEntry {
   side: string;              // "Home" | "Away"
   outcome: string;           // "W" | "L"
   recap_url: string;
+  // These may or may not be present depending on DC API version:
+  round_seq?: number | null;
+  division?: string | null;
+  league_match_id?: number | null;
 }
 
 export interface DCGameTurnSide {
@@ -339,6 +343,8 @@ export interface DCMatchInfo {
   away_label: string;
   total_sets: number;
   match_winner: number | null; // 0 = opponents[0] won, 1 = opponents[1] won
+  round_seq?: number | null;   // may be present directly on matchInfo
+  sched_date?: string | null;
   opponents: Array<{
     name: string;
     score: number;       // league points for this match — includes forfeited sets
@@ -346,6 +352,15 @@ export interface DCMatchInfo {
     league_points: number;
     league_standings_points: number;
   }>;
+}
+
+/** Extended return from fetchMatchData — includes the authoritative score and
+ *  any round/scheduling metadata discoverable from the recap page props. */
+export interface DCMatchData {
+  matchInfo: DCMatchInfo;
+  roundSeq: number | null;
+  schedDate: string | null;  // ISO "YYYY-MM-DD" if present in props
+  propKeys: string[];        // top-level prop keys — for investigating new fields
 }
 
 /** Parse a segments prop (from /games/ or /matches/) into a flat DCGameSegments array.
@@ -363,12 +378,12 @@ function parseSegmentsProp(segments: Record<string, unknown[]> | unknown[] | und
   return setsRaw.map((set) => (Array.isArray(set) ? (set as DCGameLeg[]) : []));
 }
 
-/** Fetch the authoritative match score from the /matches/ recap endpoint.
- *  matchInfo.opponents[].score is computed by DC and includes forfeited sets
- *  that are absent from /games/ segment data. opponents[0] = home team.
- *  NOTE: /matches/ uses a different segment schema (no turns/winner_index);
- *  use fetchGameSegments separately for player stat computation. */
-export async function fetchMatchData(matchGuid: string): Promise<DCMatchInfo> {
+/** Fetch the authoritative match score (and any available round metadata) from
+ *  the /matches/ recap endpoint.
+ *  matchInfo.opponents[].score is DC-computed and includes forfeited sets.
+ *  Also probes several candidate prop locations for round_seq / sched_date.
+ *  NOTE: /matches/ segments have a different schema — use fetchGameSegments for player stats. */
+export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
   const url = `https://recap.dartconnect.com/matches/${matchGuid}`;
   const res = await fetch(url, {
     headers: {
@@ -385,7 +400,34 @@ export async function fetchMatchData(matchGuid: string): Promise<DCMatchInfo> {
 
   const json = JSON.parse(m[1].replace(/&quot;/g, '"'));
   const props = json.props as Record<string, unknown>;
-  return (props.matchInfo ?? { opponents: [] }) as DCMatchInfo;
+  const matchInfo = (props.matchInfo ?? { opponents: [] }) as DCMatchInfo;
+
+  // Hunt for round_seq in several candidate locations DC might use.
+  // "match" sub-object is common in Inertia apps for the primary resource.
+  const matchProp = props.match as Record<string, unknown> | undefined;
+  const rawRound =
+    matchInfo.round_seq ??
+    matchProp?.round_seq ??
+    matchProp?.roundSeq ??
+    props.round_seq ??
+    props.roundSeq ??
+    null;
+  const roundSeq = rawRound != null ? Number(rawRound) : null;
+
+  const rawDate =
+    matchInfo.sched_date ??
+    (matchProp?.sched_date as string | undefined) ??
+    (matchProp?.schedDate as string | undefined) ??
+    null;
+  // Normalise to "YYYY-MM-DD" — DC may return full ISO timestamps
+  const schedDate = rawDate ? String(rawDate).slice(0, 10) : null;
+
+  return {
+    matchInfo,
+    roundSeq: isNaN(roundSeq as number) ? null : roundSeq,
+    schedDate,
+    propKeys: Object.keys(props),
+  };
 }
 
 /** Fetch game segments from a recap GUID.

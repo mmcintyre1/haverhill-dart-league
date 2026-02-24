@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db, seasons, matches, newsPosts } from "@/lib/db";
-import { eq, desc, asc, and, or, gt } from "drizzle-orm";
+import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,7 @@ async function getNextRound(seasonId: number) {
   const pending = await db
     .select()
     .from(matches)
-    .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P")))
+    .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P"), isNotNull(matches.roundSeq)))
     .orderBy(asc(matches.roundSeq), asc(matches.schedDate))
     .limit(20);
 
@@ -45,6 +45,7 @@ async function getLastRound(seasonId: number) {
     .where(
       and(
         eq(matches.seasonId, seasonId),
+        isNotNull(matches.roundSeq),
         or(eq(matches.status, "C"), gt(matches.homeScore!, 0))
       )
     )

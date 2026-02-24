@@ -40,8 +40,8 @@ function formatTime(t: string | null) {
 function groupByRound<T extends { roundSeq: number | null; schedDate: string | null }>(items: T[]) {
   const map = new Map<string, { round: number | null; matches: T[] }>();
   for (const m of items) {
-    // Key by roundSeq when present; fall back to schedDate for history-sourced rows
-    const key = m.roundSeq != null ? `r:${m.roundSeq}` : `d:${m.schedDate ?? ""}`;
+    // Primary key: roundSeq. Fallback: schedDate (past seasons without round numbers).
+    const key = m.roundSeq != null ? `r:${m.roundSeq}` : `d:${m.schedDate ?? "unknown"}`;
     if (!map.has(key)) map.set(key, { round: m.roundSeq, matches: [] });
     map.get(key)!.matches.push(m);
   }
@@ -82,21 +82,21 @@ export default async function MatchesPage({
     : allMatches;
 
   // Treat a match as completed if: status=C, or has non-zero scores,
-  // or its scheduled date is in the past (handles unscored played rounds).
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // or its scheduled date is strictly before today (handles unscored played rounds).
+  // Compare ISO date strings directly to avoid local-timezone vs UTC-midnight mismatches.
+  const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD" UTC
 
   const completed = filtered.filter(
     (m) =>
       m.status === "C" ||
       (m.homeScore ?? 0) + (m.awayScore ?? 0) > 0 ||
-      (m.schedDate != null && new Date(m.schedDate) < today)
+      (m.schedDate != null && m.schedDate < todayStr)
   );
   const pending = filtered.filter(
     (m) =>
       m.status !== "C" &&
       (m.homeScore ?? 0) + (m.awayScore ?? 0) === 0 &&
-      (m.schedDate == null || new Date(m.schedDate) >= today)
+      (m.schedDate == null || m.schedDate >= todayStr)
   );
 
   const upcomingRounds = groupByRound(pending).sort((a, b) =>
