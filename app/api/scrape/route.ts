@@ -9,6 +9,7 @@ import {
   normalizeLineups,
   fetchTeamMatchHistory,
   fetchGameSegments,
+  fetchMatchData,
   fetchMatchPlayerStats,
   fetchLeaderboard,
   getCSRFCookies,
@@ -16,6 +17,7 @@ import {
   type DCPlayerStat,
   type DCMatchHistoryEntry,
   type DCGameLeg,
+  type DCMatchInfo,
   type DCMatchPlayerStat,
   type DCSeason,
 } from "@/lib/dartconnect";
@@ -314,18 +316,24 @@ async function scrapeSeasonStats(
   debug.rosterLength = roster.length;
   debug.uniqueMatchGuids = matchMeta.size;
 
-  // ── D. Fetch game segments + per-match player stats ─────────────────────────
+  // ── D. Fetch segments (/games/) + authoritative scores (/matches/) + per-match player stats ──
+  // /games/ has full turn-by-turn detail (winner_index, turns) for player stat computation.
+  // /matches/ has matchInfo.opponents[].score — DC-computed, includes forfeited sets.
+  // All three are fetched in parallel per match.
   const guids = Array.from(matchMeta.keys());
   const segmentsMap = new Map<string, DCGameLeg[][]>();
+  const matchInfoMap = new Map<string, DCMatchInfo>();
   const matchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();
 
   const segResults = await Promise.allSettled(
     guids.map(async (guid) => {
-      const [sets, pStats] = await Promise.allSettled([
+      const [sets, matchInfo, pStats] = await Promise.allSettled([
         fetchGameSegments(guid),
+        fetchMatchData(guid),
         fetchMatchPlayerStats(guid),
       ]);
       if (sets.status === "fulfilled") segmentsMap.set(guid, sets.value);
+      if (matchInfo.status === "fulfilled") matchInfoMap.set(guid, matchInfo.value);
       if (pStats.status === "fulfilled") matchPlayerStatsMap.set(guid, pStats.value);
     })
   );
@@ -586,11 +594,30 @@ async function scrapeSeasonStats(
     const awayTeamNameStr = String(awayComp?.team_name  ?? awayComp?.name  ?? "");
     const parsedDate = weekKeyToISODate(meta.weekKey);
 
-    // Primary: update lineups-sourced records that already have both team IDs
-    // (future rounds where the full matchup was stored by the lineups API).
+    // Resolve authoritative score from matchInfo.opponents[].score — DC computes this
+    // server-side and includes forfeited sets that are absent from segment data.
+    // Fall back to segment-counted wins if matchInfo is unavailable.
+    const matchInfo = matchInfoMap.get(guid);
+    let homeScore = homeSetWins, awayScore = awaySetWins;
+    if (matchInfo?.opponents && matchInfo.opponents.length >= 2) {
+      // DC puts home team first (opponents[0] = home_label). Confirm by name match,
+      // fall back to index convention if names differ (e.g. abbreviation mismatch).
+      const oppByName = new Map(matchInfo.opponents.map((o) => [o.name, o.score]));
+      const fromHome = oppByName.get(homeTeamNameStr);
+      const fromAway = oppByName.get(awayTeamNameStr);
+      if (fromHome !== undefined && fromAway !== undefined) {
+        homeScore = fromHome;
+        awayScore = fromAway;
+      } else {
+        homeScore = matchInfo.opponents[0].score ?? homeSetWins;
+        awayScore = matchInfo.opponents[1].score ?? awaySetWins;
+      }
+    }
+
+    // Primary: update lineups-sourced records that already have both team IDs.
     await db
       .update(matches)
-      .set({ homeScore: homeSetWins, awayScore: awaySetWins, status: "C", dcGuid: guid, updatedAt: new Date() })
+      .set({ homeScore, awayScore, status: "C", dcGuid: guid, updatedAt: new Date() })
       .where(and(
         eq(matches.seasonId, targetSeasonId),
         eq(matches.homeTeamId, homeSerialId),
@@ -600,8 +627,6 @@ async function scrapeSeasonStats(
     // Upsert by dcGuid: inserts a new record for matches the lineups API never stored
     // (past rounds where the lineups API only kept the BYE team's placeholder row, and
     // archived seasons where the lineups API returns nothing at all).
-    // For records already updated above, the unique dcGuid index triggers an idempotent
-    // conflict-update — no duplicate rows are created.
     await db
       .insert(matches)
       .values({
@@ -612,16 +637,17 @@ async function scrapeSeasonStats(
         homeTeamName: homeTeamNameStr,
         awayTeamName: awayTeamNameStr,
         schedDate: parsedDate,
+        prettyDate: meta.weekKey || null,
         status: "C",
-        homeScore: homeSetWins,
-        awayScore: awaySetWins,
+        homeScore,
+        awayScore,
         dcGuid: guid,
       })
       .onConflictDoUpdate({
         target: matches.dcGuid,
         set: {
-          homeScore: homeSetWins,
-          awayScore: awaySetWins,
+          homeScore,
+          awayScore,
           status: "C",
           awayTeamId: awaySerialId,
           awayTeamName: awayTeamNameStr,
@@ -854,7 +880,7 @@ async function scrapeSeasonStats(
   debug.postMatchGuids = postMatchMeta.size;
 
   if (postMatchMeta.size > 0) {
-    // D'. Fetch POST segments
+    // D'. Fetch POST segments + per-match player stats (scores not needed for POST player stats)
     const postGuids = Array.from(postMatchMeta.keys());
     const postSegmentsMap = new Map<string, DCGameLeg[][]>();
     const postMatchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();

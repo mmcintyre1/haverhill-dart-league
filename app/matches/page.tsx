@@ -37,13 +37,15 @@ function formatTime(t: string | null) {
   return `${h12}:${m} ${ampm}`;
 }
 
-function groupByRound<T extends { roundSeq: number | null }>(items: T[]) {
-  const map = items.reduce<Record<number, T[]>>((acc, m) => {
-    const r = m.roundSeq ?? 0;
-    (acc[r] ??= []).push(m);
-    return acc;
-  }, {});
-  return Object.entries(map).map(([r, ms]) => ({ round: parseInt(r), matches: ms }));
+function groupByRound<T extends { roundSeq: number | null; schedDate: string | null }>(items: T[]) {
+  const map = new Map<string, { round: number | null; matches: T[] }>();
+  for (const m of items) {
+    // Key by roundSeq when present; fall back to schedDate for history-sourced rows
+    const key = m.roundSeq != null ? `r:${m.roundSeq}` : `d:${m.schedDate ?? ""}`;
+    if (!map.has(key)) map.set(key, { round: m.roundSeq, matches: [] });
+    map.get(key)!.matches.push(m);
+  }
+  return Array.from(map.values());
 }
 
 export default async function MatchesPage({
@@ -97,8 +99,12 @@ export default async function MatchesPage({
       (m.schedDate == null || new Date(m.schedDate) >= today)
   );
 
-  const upcomingRounds = groupByRound(pending).sort((a, b) => a.round - b.round);
-  const resultsRounds = groupByRound(completed).sort((a, b) => b.round - a.round);
+  const upcomingRounds = groupByRound(pending).sort((a, b) =>
+    (a.matches[0]?.schedDate ?? "").localeCompare(b.matches[0]?.schedDate ?? "")
+  );
+  const resultsRounds = groupByRound(completed).sort((a, b) =>
+    (b.matches[0]?.schedDate ?? "").localeCompare(a.matches[0]?.schedDate ?? "")
+  );
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
   const activeSeason = allSeasons.find((s) => s.id === activeId);
@@ -134,13 +140,14 @@ export default async function MatchesPage({
           <div className="space-y-4">
             {upcomingRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
-              const dateStr = first?.prettyDate ?? first?.schedDate ?? `Week ${round}`;
+              const dateStr = first?.prettyDate ?? first?.schedDate ?? "";
               const timeStr = formatTime(first?.schedTime ?? null);
+              const label = round != null ? `Week ${round} — ${dateStr}` : dateStr;
               return (
-                <div key={round} className="rounded-lg border border-slate-700 overflow-hidden shadow-lg">
+                <div key={round ?? dateStr} className="rounded-lg border border-slate-700 overflow-hidden shadow-lg">
                   <div className="bg-slate-800 px-4 py-2 flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-200">
-                      Week {round} — {dateStr}
+                      {label}
                     </span>
                     {timeStr && <span className="text-xs text-slate-400">{timeStr}</span>}
                   </div>
@@ -202,12 +209,13 @@ export default async function MatchesPage({
           <div className="space-y-4">
             {resultsRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
-              const dateStr = first?.prettyDate ?? first?.schedDate ?? `Week ${round}`;
+              const dateStr = first?.prettyDate ?? first?.schedDate ?? "";
+              const label = round != null ? `Week ${round} — ${dateStr}` : dateStr;
               return (
-                <div key={round} className="rounded-lg border border-slate-700 overflow-hidden shadow-lg">
+                <div key={round ?? dateStr} className="rounded-lg border border-slate-700 overflow-hidden shadow-lg">
                   <div className="bg-slate-800 px-4 py-2">
                     <span className="text-sm font-semibold text-slate-200">
-                      Week {round} — {dateStr}
+                      {label}
                     </span>
                   </div>
                   <table className="w-full table-fixed text-sm border-collapse">

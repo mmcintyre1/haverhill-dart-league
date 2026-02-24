@@ -334,8 +334,64 @@ export async function fetchTeamMatchHistory(
   return (res.matches ?? []) as DCMatchHistoryEntry[];
 }
 
+export interface DCMatchInfo {
+  home_label: string;
+  away_label: string;
+  total_sets: number;
+  match_winner: number | null; // 0 = opponents[0] won, 1 = opponents[1] won
+  opponents: Array<{
+    name: string;
+    score: number;       // league points for this match — includes forfeited sets
+    set_wins: number;
+    league_points: number;
+    league_standings_points: number;
+  }>;
+}
+
+/** Parse a segments prop (from /games/ or /matches/) into a flat DCGameSegments array.
+ *  Handles all three shapes DC uses: flat array, single-key object, multi-key object. */
+function parseSegmentsProp(segments: Record<string, unknown[]> | unknown[] | undefined): DCGameSegments {
+  if (!segments) return [];
+  let setsRaw: unknown[];
+  if (Array.isArray(segments)) {
+    setsRaw = segments;
+  } else {
+    // Flatten all values one level — handles both {"": [all sets]} and
+    // {"Cricket": [...], "601 DIDO": [...], ...} keyed-by-game-type shapes.
+    setsRaw = (Object.values(segments) as unknown[][]).flat(1);
+  }
+  return setsRaw.map((set) => (Array.isArray(set) ? (set as DCGameLeg[]) : []));
+}
+
+/** Fetch the authoritative match score from the /matches/ recap endpoint.
+ *  matchInfo.opponents[].score is computed by DC and includes forfeited sets
+ *  that are absent from /games/ segment data. opponents[0] = home team.
+ *  NOTE: /matches/ uses a different segment schema (no turns/winner_index);
+ *  use fetchGameSegments separately for player stat computation. */
+export async function fetchMatchData(matchGuid: string): Promise<DCMatchInfo> {
+  const url = `https://recap.dartconnect.com/matches/${matchGuid}`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      Accept: "text/html",
+    },
+  });
+  if (!res.ok) throw new Error(`match fetch error ${res.status} for ${matchGuid}`);
+
+  const html = await res.text();
+  const m = html.match(/data-page="([^"]+)"/);
+  if (!m) throw new Error(`no data-page in match recap for ${matchGuid}`);
+
+  const json = JSON.parse(m[1].replace(/&quot;/g, '"'));
+  const props = json.props as Record<string, unknown>;
+  return (props.matchInfo ?? { opponents: [] }) as DCMatchInfo;
+}
+
 /** Fetch game segments from a recap GUID.
- *  Returns DCGameLeg[][] — outer index = set (0-10), inner = legs (1-3). */
+ *  Returns DCGameLeg[][] — outer index = set, inner = legs (1-3 per set).
+ *  The /games/ endpoint has full turn-by-turn data needed for player stats.
+ *  Use fetchMatchData separately for the authoritative team score. */
 export async function fetchGameSegments(matchGuid: string): Promise<DCGameSegments> {
   const url = `https://recap.dartconnect.com/games/${matchGuid}`;
   const res = await fetch(url, {
@@ -354,21 +410,7 @@ export async function fetchGameSegments(matchGuid: string): Promise<DCGameSegmen
   const json = JSON.parse(m[1].replace(/&quot;/g, '"'));
   const props = json.props as Record<string, unknown>;
 
-  // segments is an object keyed by "" (or division name); value = array[11 sets]
-  const segments = props.segments as Record<string, unknown[]> | unknown[] | undefined;
-  if (!segments) return [];
-
-  let setsRaw: unknown[];
-  if (Array.isArray(segments)) {
-    setsRaw = segments;
-  } else {
-    // object — take the first key's value
-    const firstVal = Object.values(segments)[0];
-    setsRaw = Array.isArray(firstVal) ? firstVal : [];
-  }
-
-  // Each element of setsRaw is an array of leg objects
-  return setsRaw.map((set) => (Array.isArray(set) ? (set as DCGameLeg[]) : []));
+  return parseSegmentsProp(props.segments as Record<string, unknown[]> | unknown[] | undefined);
 }
 
 export interface DCMatchPlayerStat {
