@@ -3,6 +3,7 @@ import Link from "next/link";
 import { db, seasons, players, playerStats, playerWeekStats, playerSeasonTeams } from "@/lib/db";
 import { eq, and, asc, desc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
+import PhaseSelector from "@/components/PhaseSelector";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,15 @@ async function getPlayerHeader(playerId: number, seasonId: number, phase: string
     .limit(1);
 
   return { player, stat };
+}
+
+async function hasPlayerPostseason(playerId: number, seasonId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ id: playerStats.id })
+    .from(playerStats)
+    .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "POST")))
+    .limit(1);
+  return !!row;
 }
 
 async function getWeeklyRows(playerId: number, seasonId: number, phase: string) {
@@ -93,9 +103,10 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">No seasons available.</div>;
   }
 
-  const [{ player, stat }, weeksRaw] = await Promise.all([
+  const [{ player, stat }, weeksRaw, postExists] = await Promise.all([
     getPlayerHeader(playerId, activeId, phase),
     getWeeklyRows(playerId, activeId, phase),
+    hasPlayerPostseason(playerId, activeId),
   ]);
 
   if (!player) {
@@ -124,7 +135,7 @@ export default async function PlayerPage({
     <div>
       {/* Back link */}
       <div className="mb-5">
-        <Link href={`/leaderboard?season=${activeId}`} className="text-sm text-slate-400 hover:text-amber-400 transition-colors">
+        <Link href={`/leaderboard?season=${activeId}${phase !== "REG" ? `&phase=${phase}` : ""}`} className="text-sm text-slate-400 hover:text-amber-400 transition-colors">
           ← Leaderboard
         </Link>
       </div>
@@ -142,9 +153,16 @@ export default async function PlayerPage({
               </p>
             )}
           </div>
-          <Suspense fallback={null}>
-            <SeasonSelector seasons={seasonOptions} currentId={activeId} />
-          </Suspense>
+          <div className="flex items-center gap-2">
+            <Suspense fallback={null}>
+              <SeasonSelector seasons={seasonOptions} currentId={activeId} />
+            </Suspense>
+            {postExists && (
+              <Suspense fallback={null}>
+                <PhaseSelector current={phase} />
+              </Suspense>
+            )}
+          </div>
         </div>
 
         {stat && (
