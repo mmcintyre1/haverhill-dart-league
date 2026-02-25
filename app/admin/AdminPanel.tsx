@@ -171,13 +171,50 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
         headers,
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Unknown error");
+      const text = await res.text();
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Server returned non-JSON (status ${res.status}) — likely a function timeout. Response: ${text.slice(0, 200)}`);
+      }
+      if (!res.ok) throw new Error((data.error as string) ?? "Unknown error");
+
+      // Netlify background function path: poll for completion
+      if (data.status === "running") {
+        setResult({ ok: true, message: "Scrape running in background — checking for completion…" });
+        const start = Date.now();
+        const poll = async (): Promise<void> => {
+          if (Date.now() - start > 15 * 60 * 1000) {
+            setResult({ ok: false, message: "Timed out waiting for scrape to complete after 15 minutes." });
+            setLoading(false);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 4000));
+          try {
+            const statusRes = await fetch("/api/scrape/status");
+            const entry = await statusRes.json() as { status: string; playersUpdated?: number; matchesUpdated?: number; errorMessage?: string } | null;
+            if (!entry) { poll(); return; }
+            if (entry.status === "success") {
+              setResult({ ok: true, message: `Scrape complete — ${entry.playersUpdated ?? 0} players, ${entry.matchesUpdated ?? 0} matches updated.` });
+              setLoading(false);
+            } else if (entry.status === "error") {
+              setResult({ ok: false, message: entry.errorMessage ?? "Scrape failed." });
+              setLoading(false);
+            } else {
+              poll();
+            }
+          } catch { poll(); }
+        };
+        poll();
+        return; // loading stays true until poll() resolves
+      }
+
       const msg = `Scraped ${data.seasonsScraped} season(s) — ${data.playersUpdated} players, ${data.matchesUpdated} matches updated.`;
       setResult({ ok: true, message: msg, detail: JSON.stringify(data.debug ?? {}, null, 2) });
+      setLoading(false);
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
-    } finally {
       setLoading(false);
     }
   }

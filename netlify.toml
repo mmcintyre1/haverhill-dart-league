@@ -6,8 +6,13 @@
   package = "@netlify/plugin-nextjs"
 
 [functions]
-  # Allow longer execution for the scrape function
   node_bundler = "esbuild"
+
+[functions."___netlify-server-handler"]
+  timeout = 26
+
+[functions."scrape-background"]
+  external_node_modules = ["@neondatabase/serverless"]
 
 [functions."scheduled-scrape"]
   external_node_modules = ["@neondatabase/serverless"]
