@@ -163,56 +163,72 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
       mode === "all"       ? { all: true } :
                              { all: true, force: true };
 
+    // NEXT_PUBLIC_SCRAPE_BG_URL is set on Netlify to "/.netlify/functions/scrape-background".
+    // Calling the background function directly from the browser avoids the Next.js API route
+    // timeout — Netlify returns 202 immediately and runs the function for up to 15 minutes.
+    // When unset (local dev), falls back to /api/scrape which runs synchronously.
+    const bgUrl = process.env.NEXT_PUBLIC_SCRAPE_BG_URL;
+
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (secret) headers["Authorization"] = `Bearer ${secret}`;
-      const res = await fetch("/api/scrape", {
+
+      const scrapeUrl = bgUrl ?? "/api/scrape";
+      const res = await fetch(scrapeUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, triggeredBy: "manual" }),
       });
-      const text = await res.text();
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Server returned non-JSON (status ${res.status}) — likely a function timeout. Response: ${text.slice(0, 200)}`);
-      }
-      if (!res.ok) throw new Error((data.error as string) ?? "Unknown error");
 
-      // Netlify background function path: poll for completion
-      if (data.status === "running") {
-        setResult({ ok: true, message: "Scrape running in background — checking for completion…" });
-        const start = Date.now();
-        const poll = async (): Promise<void> => {
-          if (Date.now() - start > 15 * 60 * 1000) {
-            setResult({ ok: false, message: "Timed out waiting for scrape to complete after 15 minutes." });
+      // Background function returns 202 immediately; API route returns 200 with JSON
+      const isBackground = res.status === 202;
+
+      if (!isBackground) {
+        const text = await res.text();
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(`Server returned non-JSON (status ${res.status}) — likely a function timeout. Response: ${text.slice(0, 200)}`);
+        }
+        if (!res.ok) throw new Error((data.error as string) ?? "Unknown error");
+
+        // Synchronous result (local dev)
+        if (data.status !== "running") {
+          const msg = `Scraped ${data.seasonsScraped} season(s) — ${data.playersUpdated} players, ${data.matchesUpdated} matches updated.`;
+          setResult({ ok: true, message: msg, detail: JSON.stringify(data.debug ?? {}, null, 2) });
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Background path: poll for completion
+      setResult({ ok: true, message: "Scrape running in background — checking for completion…" });
+      const start = Date.now();
+      const poll = async (): Promise<void> => {
+        if (Date.now() - start > 15 * 60 * 1000) {
+          setResult({ ok: false, message: "Timed out waiting for scrape to complete after 15 minutes." });
+          setLoading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 4000));
+        try {
+          const statusRes = await fetch("/api/scrape/status");
+          const entry = await statusRes.json() as { status: string; playersUpdated?: number; matchesUpdated?: number; errorMessage?: string } | null;
+          if (!entry) { poll(); return; }
+          if (entry.status === "success") {
+            setResult({ ok: true, message: `Scrape complete — ${entry.playersUpdated ?? 0} players, ${entry.matchesUpdated ?? 0} matches updated.` });
             setLoading(false);
-            return;
+          } else if (entry.status === "error") {
+            setResult({ ok: false, message: entry.errorMessage ?? "Scrape failed." });
+            setLoading(false);
+          } else {
+            poll();
           }
-          await new Promise((r) => setTimeout(r, 4000));
-          try {
-            const statusRes = await fetch("/api/scrape/status");
-            const entry = await statusRes.json() as { status: string; playersUpdated?: number; matchesUpdated?: number; errorMessage?: string } | null;
-            if (!entry) { poll(); return; }
-            if (entry.status === "success") {
-              setResult({ ok: true, message: `Scrape complete — ${entry.playersUpdated ?? 0} players, ${entry.matchesUpdated ?? 0} matches updated.` });
-              setLoading(false);
-            } else if (entry.status === "error") {
-              setResult({ ok: false, message: entry.errorMessage ?? "Scrape failed." });
-              setLoading(false);
-            } else {
-              poll();
-            }
-          } catch { poll(); }
-        };
-        poll();
-        return; // loading stays true until poll() resolves
-      }
-
-      const msg = `Scraped ${data.seasonsScraped} season(s) — ${data.playersUpdated} players, ${data.matchesUpdated} matches updated.`;
-      setResult({ ok: true, message: msg, detail: JSON.stringify(data.debug ?? {}, null, 2) });
-      setLoading(false);
+        } catch { poll(); }
+      };
+      poll();
+      return; // loading stays true until poll() resolves
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
       setLoading(false);

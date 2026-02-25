@@ -14,11 +14,12 @@ export async function POST(req: NextRequest) {
   const triggeredBy = req.headers.get("x-triggered-by") ?? "manual";
   const body = await req.json().catch(() => ({})) as ScrapePayload;
 
-  // On Netlify, delegate to background function so we don't hit the timeout.
-  // NETLIFY=true is injected at both build and runtime for all Netlify functions.
-  const onNetlify = process.env.NETLIFY === "true" || process.env.NETLIFY === "1" || !!process.env.NETLIFY_SITE_ID;
-  console.log("[scrape] onNetlify:", onNetlify, "NETLIFY:", process.env.NETLIFY, "SITE_ID:", process.env.NETLIFY_SITE_ID, "URL:", process.env.URL);
-  if (onNetlify) {
+  // Delegate to background function when SCRAPE_BG_ENABLED=true (set this in Netlify env vars).
+  // Falls back to checking NETLIFY/NETLIFY_SITE_ID as a secondary signal.
+  const useBg = process.env.SCRAPE_BG_ENABLED === "true"
+    || process.env.NETLIFY === "true"
+    || !!process.env.NETLIFY_SITE_ID;
+  if (useBg) {
     const siteUrl = (process.env.URL ?? "").replace(/\/$/, "");
     const bgUrl = `${siteUrl}/.netlify/functions/scrape-background`;
     // Fire and forget — background function runs for up to 15 minutes
