@@ -136,7 +136,7 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
   }
 
   for (const [, rows] of byDiv) {
-    rows.sort((a, b) => b.wins - a.wins || b.pts - a.pts || a.losses - b.losses);
+    rows.sort((a, b) => b.pts - a.pts || b.wins - a.wins || a.losses - b.losses);
   }
 
   return Array.from(byDiv.entries()).sort(([a], [b]) => a.localeCompare(b));
