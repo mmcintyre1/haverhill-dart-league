@@ -549,3 +549,103 @@ export async function fetchLeaderboard(
 
 /** Get CSRF cookies (exported for reuse across calls in a single scrape) */
 export { getCSRFCookies };
+
+// ─── Venue scraping (my.dartconnect.com schedule page) ───────────────────────
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)));
+}
+
+export interface DCTeamVenue {
+  name: string;
+  address: string;
+  phone: string;
+}
+
+/**
+ * Scrape the my.dartconnect.com schedule page for a given slug + seasonId and
+ * return a Map of teamName → venue info.  Home team names are matched by the
+ * "(H)" marker in the HTML.  Returns an empty Map if the fetch or parse fails
+ * (non-blocking — venue info is best-effort).
+ */
+export async function fetchTeamVenues(
+  slug: string,
+  seasonId: number
+): Promise<Map<string, DCTeamVenue>> {
+  const result = new Map<string, DCTeamVenue>();
+
+  try {
+    const res = await fetch(
+      `https://my.dartconnect.com/league/schedule/${slug}/${seasonId}`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+          Accept: "text/html",
+        },
+      }
+    );
+
+    if (!res.ok) {
+      console.warn(`fetchTeamVenues: HTTP ${res.status} for ${slug}/${seasonId}`);
+      return result;
+    }
+
+    const raw = await res.text();
+    const html = decodeHtmlEntities(raw);
+
+    // Find all home-team positions — spans with class="truncate" immediately
+    // followed by a "(H)" sibling span.
+    const homeTeamRe =
+      /<span class="truncate">([^<]+)<\/span>\s*<span[^>]*>\(H\)<\/span>/g;
+    const homeTeams: Array<{ name: string; index: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = homeTeamRe.exec(html)) !== null) {
+      homeTeams.push({ name: m[1].trim(), index: m.index });
+    }
+
+    for (let i = 0; i < homeTeams.length; i++) {
+      const startIdx = homeTeams[i].index;
+      // Look forward to the next home-team entry (or end of HTML).
+      const endIdx =
+        i + 1 < homeTeams.length ? homeTeams[i + 1].index : html.length;
+      const section = html.slice(startIdx, endIdx);
+
+      // Venue name: two consecutive divs — concatenate them.
+      const venueNameM = section.match(
+        /<div class="font-semibold">([^<]+)<\/div>\s*<div>([^<]+)<\/div>/
+      );
+
+      // Address block.
+      const addressM = section.match(
+        /<div class="text-xl font-bold">Venue Address<\/div>\s*<div>\s*<div class="space-y-1">\s*<span>([^<]+)<\/span>/
+      );
+
+      // Phone link.
+      const phoneM = section.match(/href="tel:\+1 ([\d\s()-]+)"/);
+
+      if (!venueNameM && !addressM && !phoneM) continue;
+
+      const teamName = homeTeams[i].name;
+      if (result.has(teamName)) continue; // already populated from an earlier match week
+
+      result.set(teamName, {
+        name: venueNameM
+          ? `${venueNameM[1].trim()} ${venueNameM[2].trim()}`.trim()
+          : "",
+        address: addressM ? addressM[1].trim() : "",
+        phone: phoneM ? phoneM[1].trim() : "",
+      });
+    }
+  } catch (err) {
+    console.warn("fetchTeamVenues: failed", err);
+  }
+
+  return result;
+}

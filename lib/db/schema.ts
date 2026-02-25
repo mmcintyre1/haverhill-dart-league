@@ -51,6 +51,9 @@ export const teams = pgTable(
     divisionId: integer("division_id").references(() => divisions.id),
     name: text("name").notNull(),
     captainName: text("captain_name"),
+    venueName:    text("venue_name"),
+    venueAddress: text("venue_address"),
+    venuePhone:   text("venue_phone"),
     // DartConnect-authoritative standings (from fetchStandingsPageProps competitors)
     dcWins: integer("dc_wins"),
     dcLosses: integer("dc_losses"),

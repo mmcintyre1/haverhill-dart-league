@@ -11,6 +11,7 @@ import {
   fetchMatchData,
   fetchMatchPlayerStats,
   fetchLeaderboard,
+  fetchTeamVenues,
   getCSRFCookies,
   type DCMatch,
   type DCPlayerStat,
@@ -611,6 +612,23 @@ async function scrapeSeasonStats(
       .from(teams)
       .where(eq(teams.seasonId, targetSeasonId));
     for (const row of teamRows) dcTeamToSerialId.set(row.dcId, row.id);
+  }
+
+  // ── H2. Populate team venues from my.dartconnect.com schedule page ───────────
+  const leagueSlug = process.env.DC_LEAGUE_ID;
+  if (leagueSlug) {
+    try {
+      const venueMap = await fetchTeamVenues(leagueSlug, targetSeasonId);
+      debug.venueMapSize = venueMap.size;
+      for (const [teamName, v] of venueMap) {
+        await db
+          .update(teams)
+          .set({ venueName: v.name, venueAddress: v.address, venuePhone: v.phone })
+          .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.name, teamName)));
+      }
+    } catch (e) {
+      debug.venueError = e instanceof Error ? e.message : String(e);
+    }
   }
 
   // ── I. Update completed match scores from segment data ──────────────────────

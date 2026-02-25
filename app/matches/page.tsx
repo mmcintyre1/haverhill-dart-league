@@ -1,7 +1,8 @@
 import { Suspense } from "react";
-import { db, seasons, matches } from "@/lib/db";
+import { db, seasons, matches, teams } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
 import { eq, asc, desc } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 
@@ -21,9 +22,27 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
 }
 
 async function getAllMatches(seasonId: number) {
+  const homeTeams = alias(teams, "home_teams");
   return db
-    .select()
+    .select({
+      id: matches.id,
+      seasonId: matches.seasonId,
+      divisionName: matches.divisionName,
+      roundSeq: matches.roundSeq,
+      homeTeamId: matches.homeTeamId,
+      awayTeamId: matches.awayTeamId,
+      homeTeamName: matches.homeTeamName,
+      awayTeamName: matches.awayTeamName,
+      schedDate: matches.schedDate,
+      schedTime: matches.schedTime,
+      status: matches.status,
+      homeScore: matches.homeScore,
+      awayScore: matches.awayScore,
+      prettyDate: matches.prettyDate,
+      homeTeamVenueName: homeTeams.venueName,
+    })
     .from(matches)
+    .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
     .where(eq(matches.seasonId, seasonId))
     .orderBy(asc(matches.roundSeq), asc(matches.schedDate), asc(matches.schedTime));
 }
@@ -174,8 +193,15 @@ export default async function MatchesPage({
                           <td className="py-2.5 text-center text-slate-500 text-xs font-semibold">
                             @
                           </td>
-                          <td className="px-3 py-2.5 font-medium text-slate-200 truncate">
-                            {m.homeTeamName}
+                          <td className="px-3 py-2.5 truncate">
+                            <span className="font-medium text-slate-200 block truncate">
+                              {m.homeTeamName}
+                            </span>
+                            {m.homeTeamVenueName && (
+                              <span className="block text-xs text-slate-500 truncate">
+                                @ {m.homeTeamVenueName}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       ))}

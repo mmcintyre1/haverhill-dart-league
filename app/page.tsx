@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { db, seasons, matches, newsPosts } from "@/lib/db";
+import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,20 @@ async function getNews() {
 }
 
 async function getNextRound(seasonId: number) {
+  const homeTeams = alias(teams, "home_teams");
   const pending = await db
-    .select()
+    .select({
+      id: matches.id,
+      roundSeq: matches.roundSeq,
+      schedDate: matches.schedDate,
+      prettyDate: matches.prettyDate,
+      divisionName: matches.divisionName,
+      homeTeamName: matches.homeTeamName,
+      awayTeamName: matches.awayTeamName,
+      homeTeamVenueName: homeTeams.venueName,
+    })
     .from(matches)
+    .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
     .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P"), isNotNull(matches.roundSeq)))
     .orderBy(asc(matches.roundSeq), asc(matches.schedDate))
     .limit(20);
@@ -185,7 +197,12 @@ export default async function HomePage() {
                     className="px-4 py-2.5 flex items-center gap-2 text-sm"
                   >
                     <span className="text-slate-500 text-xs w-6 shrink-0">{m.divisionName}</span>
-                    <span className="text-slate-300 font-medium text-right flex-1 truncate">{m.homeTeamName}</span>
+                    <span className="text-right flex-1 min-w-0">
+                      <span className="text-slate-300 font-medium block truncate">{m.homeTeamName}</span>
+                      {m.homeTeamVenueName && (
+                        <span className="text-slate-600 text-xs block truncate">{m.homeTeamVenueName}</span>
+                      )}
+                    </span>
                     <span className="text-slate-600 text-xs shrink-0">vs</span>
                     <span className="text-slate-300 font-medium flex-1 truncate">{m.awayTeamName}</span>
                   </div>
