@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams } from "@/lib/db";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams } from "./db";
 import {
   fetchLeaguePageProps,
   fetchStandingsPageProps,
@@ -19,7 +19,7 @@ import {
   type DCMatchData,
   type DCMatchPlayerStat,
   type DCSeason,
-} from "@/lib/dartconnect";
+} from "./dartconnect";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

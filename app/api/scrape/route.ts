@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, scrapeLog } from "@/lib/db";
-import { desc } from "drizzle-orm";
 import { runScrape, type ScrapePayload } from "@/lib/scrape-runner";
 
 export const runtime = "nodejs";
