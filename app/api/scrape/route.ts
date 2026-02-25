@@ -15,17 +15,23 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as ScrapePayload;
 
   // On Netlify, delegate to background function so we don't hit the timeout.
-  if (process.env.NETLIFY) {
-    const bgUrl = `${process.env.URL}/.netlify/functions/scrape-background`;
+  // NETLIFY=true is injected at both build and runtime for all Netlify functions.
+  const onNetlify = process.env.NETLIFY === "true" || process.env.NETLIFY === "1" || !!process.env.NETLIFY_SITE_ID;
+  console.log("[scrape] onNetlify:", onNetlify, "NETLIFY:", process.env.NETLIFY, "SITE_ID:", process.env.NETLIFY_SITE_ID, "URL:", process.env.URL);
+  if (onNetlify) {
+    const siteUrl = (process.env.URL ?? "").replace(/\/$/, "");
+    const bgUrl = `${siteUrl}/.netlify/functions/scrape-background`;
     // Fire and forget — background function runs for up to 15 minutes
-    fetch(bgUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.SCRAPE_SECRET ?? ""}`,
-      },
-      body: JSON.stringify({ ...body, triggeredBy }),
-    }).catch(() => {}); // intentionally not awaited
+    try {
+      fetch(bgUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.SCRAPE_SECRET ?? ""}`,
+        },
+        body: JSON.stringify({ ...body, triggeredBy }),
+      }).catch(() => {}); // intentionally not awaited
+    } catch { /* invalid URL or sync throw — still return running */ }
 
     return NextResponse.json({ status: "running" });
   }
