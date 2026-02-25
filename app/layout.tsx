@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import NavLinks from "@/components/NavLinks";
+import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -14,6 +15,13 @@ const LEAGUE_NAME = process.env.LEAGUE_NAME ?? "Dart League";
 export const metadata: Metadata = {
   title: LEAGUE_NAME,
   description: `Stats, schedule, and results for the ${LEAGUE_NAME}`,
+  themeColor: "#f59e0b",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "HDL Stats",
+  },
+  icons: { apple: "/icons/icon.svg" },
 };
 
 export default function RootLayout({
@@ -24,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-screen bg-[#0a0f1e] text-slate-200 antialiased">
+        <ServiceWorkerRegistrar />
         <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0 z-10 relative">
           {/* Amber accent line */}
           <div className="h-[2px] bg-gradient-to-r from-amber-600 via-amber-400 to-amber-600" />

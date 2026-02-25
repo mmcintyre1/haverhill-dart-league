@@ -16,7 +16,11 @@
       "WebFetch(domain:leaderboard.dartconnect.com)",
       "WebFetch(domain:recap.dartconnect.com)",
       "Bash(done)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(magick:*)",
+      "Bash(convert:*)",
+      "Bash(winget:*)",
+      "Bash(npm --version:*)"
     ],
     "additionalDirectories": [
       "C:\\Users\\mfmci",

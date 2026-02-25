@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!-- Background with rounded corners -->
+  <rect width="192" height="192" rx="28" fill="#0a0f1e"/>
+  <!-- Outer amber ring -->
+  <circle cx="96" cy="96" r="74" fill="#f59e0b"/>
+  <!-- Second dark ring -->
+  <circle cx="96" cy="96" r="58" fill="#0a0f1e"/>
+  <!-- Third amber ring -->
+  <circle cx="96" cy="96" r="42" fill="#d97706"/>
+  <!-- Fourth dark ring -->
+  <circle cx="96" cy="96" r="26" fill="#0a0f1e"/>
+  <!-- Inner amber bull -->
+  <circle cx="96" cy="96" r="14" fill="#f59e0b"/>
+  <!-- Bull's-eye center -->
+  <circle cx="96" cy="96" r="6" fill="#0a0f1e"/>
+</svg>
