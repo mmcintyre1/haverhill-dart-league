@@ -1,5 +1,5 @@
-import { eq, and } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams } from "./db";
+import { eq, and, inArray } from "drizzle-orm";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig } from "./db";
 import {
   fetchLeaguePageProps,
   fetchStandingsPageProps,
@@ -353,6 +353,23 @@ async function scrapeSeasonStats(
     }
   }
 
+  // ── E0. Load game-3 / tiebreaker config ─────────────────────────────────────
+  // Keys: g3.include_180, g3.include_ro9, g3.include_hout (default true)
+  //       g3.include_100plus, g3.include_rnds, g3.include_perfect (default false)
+  const g3CfgRows = await db.select().from(scoringConfig)
+    .where(inArray(scoringConfig.scope, ["global", String(targetSeasonId)]));
+  const g3CfgMap: Record<string, string> = {};
+  for (const r of g3CfgRows.filter(r => r.scope === "global" && !r.division)) g3CfgMap[r.key] = r.value;
+  for (const r of g3CfgRows.filter(r => r.scope === String(targetSeasonId) && !r.division)) g3CfgMap[r.key] = r.value;
+  const g3 = {
+    include180:     g3CfgMap["g3.include_180"]     !== "false", // default true
+    includeRo9:     g3CfgMap["g3.include_ro9"]     !== "false", // default true
+    includeHout:    g3CfgMap["g3.include_hout"]    !== "false", // default true
+    include100p:    g3CfgMap["g3.include_100plus"] === "true",  // default false
+    includeRnds:    g3CfgMap["g3.include_rnds"]    === "true",  // default false
+    includePerfect: g3CfgMap["g3.include_perfect"] === "true",  // default false
+  };
+
   const sampleCricketScores: string[] = [];
 
   for (const [guid, sets] of segmentsMap) {
@@ -408,6 +425,7 @@ async function scrapeSeasonStats(
 
       for (const leg of legs) {
         const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
+        const isCrktG3 = type === "crkt" && leg.set_game_number === 3;
 
         for (const turn of leg.turns ?? []) {
           for (const side of ["home", "away"] as const) {
@@ -428,21 +446,21 @@ async function scrapeSeasonStats(
             const remaining = t.current_score;
             const w = acc.weekStats.get(weekKey);
 
-            if (is01 && !is501Tiebreaker && score01 >= 100) {
+            if (is01 && score01 >= 100 && (!is501Tiebreaker || g3.include100p || (g3.includePerfect && score01 === 180))) {
               acc.hundredPlus += score01;
               acc.weekHundredPlus.set(weekKey, (acc.weekHundredPlus.get(weekKey) ?? 0) + score01);
               if (w) w.hundredPlus += score01;
             }
-            if (is01 && score01 === 180) { acc.oneEighty++; if (w) w.oneEighty++; }
-            if (is01 && remaining === 0 && score01 > 100) {
+            if (is01 && score01 === 180 && (!is501Tiebreaker || g3.include180)) { acc.oneEighty++; if (w) w.oneEighty++; }
+            if (is01 && remaining === 0 && score01 > 100 && (!is501Tiebreaker || g3.includeHout)) {
               if (score01 > acc.hOut) acc.hOut = score01;
               if (w && score01 > w.hOut) w.hOut = score01;
             }
-            if (isCrkt && leg.set_game_number !== 3 && crktMarks >= 6) {
+            if (isCrkt && crktMarks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && crktMarks === 9))) {
               acc.cricketRnds += crktMarks;
               if (w) w.rnds += crktMarks;
             }
-            if (isCrkt && crktMarks === 9) { acc.ro9++; if (w) w.ro9++; }
+            if (isCrkt && crktMarks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
           }
         }
 
@@ -982,6 +1000,7 @@ async function scrapeSeasonStats(
 
         for (const leg of legs) {
           const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
+          const isCrktG3 = type === "crkt" && leg.set_game_number === 3;
           for (const turn of leg.turns ?? []) {
             for (const side of ["home", "away"] as const) {
               const t = turn[side];
@@ -994,21 +1013,21 @@ async function scrapeSeasonStats(
               const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
               const remaining = t.current_score;
               const w = acc.weekStats.get(weekKey);
-              if (is01 && !is501Tiebreaker && score01 >= 100) {
+              if (is01 && score01 >= 100 && (!is501Tiebreaker || g3.include100p || (g3.includePerfect && score01 === 180))) {
                 acc.hundredPlus += score01;
                 acc.weekHundredPlus.set(weekKey, (acc.weekHundredPlus.get(weekKey) ?? 0) + score01);
                 if (w) w.hundredPlus += score01;
               }
-              if (is01 && score01 === 180) { acc.oneEighty++; if (w) w.oneEighty++; }
-              if (is01 && remaining === 0 && score01 > 100) {
+              if (is01 && score01 === 180 && (!is501Tiebreaker || g3.include180)) { acc.oneEighty++; if (w) w.oneEighty++; }
+              if (is01 && remaining === 0 && score01 > 100 && (!is501Tiebreaker || g3.includeHout)) {
                 if (score01 > acc.hOut) acc.hOut = score01;
                 if (w && score01 > w.hOut) w.hOut = score01;
               }
-              if (isCrkt && leg.set_game_number !== 3 && crktMarks >= 6) {
+              if (isCrkt && crktMarks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && crktMarks === 9))) {
                 acc.cricketRnds += crktMarks;
                 if (w) w.rnds += crktMarks;
               }
-              if (isCrkt && crktMarks === 9) { acc.ro9++; if (w) w.ro9++; }
+              if (isCrkt && crktMarks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
             }
           }
           if (type === "501") {

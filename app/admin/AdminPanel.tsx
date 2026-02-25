@@ -464,6 +464,11 @@ function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
   const [hhLoading, setHhLoading] = useState(false);
   const [hhResult, setHhResult] = useState<Result | null>(null);
 
+  // Game 3 / tiebreaker config flags
+  const [g3Cfg, setG3Cfg] = useState<Record<string, string>>({});
+  const [g3Loading, setG3Loading] = useState(false);
+  const [g3Result, setG3Result] = useState<Result | null>(null);
+
   // Fetch all config rows for global + selected scope
   useEffect(() => {
     async function load() {
@@ -490,6 +495,14 @@ function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
     const divDef = HH_DIVISION_DEFAULTS[division] ?? HH_DIVISION_DEFAULTS["A"];
     setHhThreshold(cfg["01_hh.threshold"] ?? divDef.hh);
     setRoHhThreshold(cfg["ro_hh.threshold"] ?? divDef.roHh);
+    setG3Cfg({
+      "g3.include_180":     cfg["g3.include_180"]     ?? "true",
+      "g3.include_ro9":     cfg["g3.include_ro9"]     ?? "true",
+      "g3.include_hout":    cfg["g3.include_hout"]    ?? "true",
+      "g3.include_100plus": cfg["g3.include_100plus"] ?? "false",
+      "g3.include_rnds":    cfg["g3.include_rnds"]    ?? "false",
+      "g3.include_perfect": cfg["g3.include_perfect"] ?? "false",
+    });
   }, [allRows, scope, division]);
 
   async function saveRow(key: string, value: string, div: string | null,
@@ -654,6 +667,63 @@ function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
               </button>
             </div>
             {hhResult && <ResultBanner result={hhResult} onDismiss={() => setHhResult(null)} />}
+          </div>
+
+          {/* Game 3 / Tiebreaker Rules */}
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <h3 className="text-sm font-semibold text-slate-200">Game 3 (Tiebreaker) Rules</h3>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Controls whether tiebreaker legs (game 3 of a set) count toward stat columns.
+              Changes take effect on the next data refresh. &ldquo;Perfect&rdquo; scores means 180s in 01 game 3
+              count toward the 100+ total, and RO9s count toward the RNDS total, even when those columns
+              otherwise exclude game 3.
+            </p>
+            <div className="space-y-2.5">
+              {([
+                { key: "g3.include_180",     label: "Count 180s in the 180 column",                            defaultOn: true  },
+                { key: "g3.include_ro9",     label: "Count RO9s in the RO9 column",                            defaultOn: true  },
+                { key: "g3.include_hout",    label: "Count high outs in the High Out column",                  defaultOn: true  },
+                { key: "g3.include_100plus", label: "Count game 3 scores in the 100+ total",                   defaultOn: false },
+                { key: "g3.include_rnds",    label: "Count game 3 cricket rounds in the RNDS total",           defaultOn: false },
+                { key: "g3.include_perfect", label: "Count perfect game 3 scores (180/RO9) in 100+ and RNDS", defaultOn: false },
+              ] as const).map(({ key, label, defaultOn }) => {
+                const val = g3Cfg[key] ?? (defaultOn ? "true" : "false");
+                return (
+                  <label key={key} className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={val === "true"}
+                      onChange={e => setG3Cfg(prev => ({ ...prev, [key]: e.target.checked ? "true" : "false" }))}
+                      className="accent-amber-500 w-4 h-4 shrink-0"
+                    />
+                    <span className="text-sm text-slate-300">{label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-4">
+              <button
+                disabled={g3Loading}
+                className={saveBtnCls}
+                onClick={() => {
+                  setG3Loading(true);
+                  setG3Result(null);
+                  const saves = Object.entries(g3Cfg).map(([key, value]) =>
+                    saveRow(key, value, null, () => {}, () => {})
+                  );
+                  Promise.all(saves)
+                    .then(() => setG3Result({ ok: true, message: "Game 3 rules saved." }))
+                    .catch(e => setG3Result({ ok: false, message: e instanceof Error ? e.message : String(e) }))
+                    .finally(() => setG3Loading(false));
+                }}
+              >
+                {g3Loading ? "Saving…" : "Save Game 3 Rules"}
+              </button>
+            </div>
+            {g3Result && <ResultBanner result={g3Result} onDismiss={() => setG3Result(null)} />}
           </div>
         </>
       )}

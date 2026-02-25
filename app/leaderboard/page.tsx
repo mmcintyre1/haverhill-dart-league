@@ -6,6 +6,7 @@ import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardT
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import PhaseSelector from "@/components/PhaseSelector";
+import ScoringGuide from "@/components/ScoringGuide";
 
 export const dynamic = "force-dynamic";
 
@@ -141,6 +142,22 @@ async function getHhThresholds(
   return result;
 }
 
+async function getG3Config(seasonId: number): Promise<Record<string, string>> {
+  const rows = await db
+    .select()
+    .from(scoringConfig)
+    .where(
+      and(
+        or(eq(scoringConfig.scope, "global"), eq(scoringConfig.scope, String(seasonId))),
+        isNull(scoringConfig.division)
+      )
+    );
+  const map: Record<string, string> = {};
+  for (const r of rows.filter((r) => r.scope === "global")) map[r.key] = r.value;
+  for (const r of rows.filter((r) => r.scope !== "global")) map[r.key] = r.value;
+  return map;
+}
+
 async function getWeeklyStats(
   seasonId: number,
   phase: string
@@ -183,7 +200,7 @@ export default async function LeaderboardPage({
   const divisionFilter = params.division ?? null;
   const phase = params.phase ?? "REG";
 
-  const [rows, lastScraped, divisionList, postExists, scoringPts, hhThresholds, weeklyStats] =
+  const [rows, lastScraped, divisionList, postExists, scoringPts, hhThresholds, weeklyStats, g3Config] =
     await Promise.all([
       activeId ? getLeaderboard(activeId, divisionFilter, phase) : Promise.resolve([]),
       activeId ? getLastScraped(activeId) : Promise.resolve(null),
@@ -192,6 +209,7 @@ export default async function LeaderboardPage({
       activeId ? getScoringPts(activeId) : Promise.resolve({ cricket: 1, "601": 1, "501": 1 }),
       activeId ? getHhThresholds(activeId) : Promise.resolve({} as Record<string, { hh: number; roHh: number }>),
       activeId ? getWeeklyStats(activeId, phase) : Promise.resolve([]),
+      activeId ? getG3Config(activeId) : Promise.resolve({} as Record<string, string>),
     ]);
 
   // Group weekly stats by playerId
@@ -268,7 +286,10 @@ export default async function LeaderboardPage({
           </p>
         </div>
       ) : (
-        <LeaderboardTable rows={enrichedRows} seasonId={activeId} phase={phase} scoringPts={scoringPts} />
+        <>
+          <ScoringGuide scoringPts={scoringPts} g3Cfg={g3Config} hhThresholds={hhThresholds} />
+          <LeaderboardTable rows={enrichedRows} seasonId={activeId} phase={phase} scoringPts={scoringPts} />
+        </>
       )}
     </div>
   );
