@@ -127,70 +127,74 @@ export default async function TeamsPage({
               {/* Team rows */}
               <div className="divide-y divide-slate-800">
                 {divTeams.map((team) => (
-                  <div key={team.teamId} className="px-4 py-4 bg-slate-900">
-                    <div className="flex flex-col sm:flex-row sm:items-start gap-3 sm:gap-6">
-
-                      {/* Team name + captain */}
-                      <div className="sm:w-48 shrink-0">
-                        <p className="font-semibold text-white text-sm leading-snug">
-                          {team.teamName}
-                        </p>
+                  <details key={team.teamId} className="group bg-slate-900">
+                    {/* Collapsed summary row */}
+                    <summary className="flex items-center px-4 py-3 cursor-pointer hover:bg-slate-800/50 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
+                      <span className="w-4 mr-2 text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block shrink-0">
+                        ▸
+                      </span>
+                      <div className="flex-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 min-w-0">
+                        <span className="font-semibold text-white text-sm">{team.teamName}</span>
                         {team.captain && (
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Capt. {team.captain}
-                          </p>
+                          <span className="text-xs text-slate-500">Capt. {team.captain}</span>
+                        )}
+                        {team.venueName && (
+                          <span className="hidden sm:flex items-center gap-1 text-xs text-amber-400">
+                            <svg className="shrink-0 text-slate-400" width="9" height="11" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 2C7.58 2 4 5.58 4 10c0 6.5 8 16 8 16s8-9.5 8-16c0-4.42-3.58-8-8-8z"/>
+                              <circle cx="12" cy="10" r="3"/>
+                            </svg>
+                            {team.venueName}
+                          </span>
                         )}
                       </div>
-
-                      {/* Venue */}
-                      <div className="sm:w-60 shrink-0">
-                        {team.venueName ? (
-                          <>
-                            <p className="text-sm text-slate-300 leading-snug">{team.venueName}</p>
-                            {team.venueAddress && (
-                              <p className="text-xs text-slate-500 mt-0.5 leading-snug">
-                                {team.venueAddress}
-                              </p>
-                            )}
-                            {team.venuePhone && (
-                              <a
-                                href={`tel:${team.venuePhone}`}
-                                className="text-xs text-slate-500 hover:text-slate-300 transition-colors mt-0.5 block"
-                              >
-                                {team.venuePhone}
-                              </a>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-xs text-slate-700 italic">No venue on file</p>
-                        )}
-                      </div>
-
-                      {/* Roster */}
                       {team.players.length > 0 && (
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                            Roster
-                          </p>
-                          <p className="text-sm text-slate-400 leading-relaxed">
-                            {team.players.map((p, i) => (
-                              <span key={p.id}>
-                                <Link
-                                  href={`/players/${p.id}?season=${activeId}`}
-                                  className="hover:text-amber-400 transition-colors"
-                                >
-                                  {p.name}
-                                </Link>
-                                {i < team.players.length - 1 && (
-                                  <span className="mx-1 text-slate-700">·</span>
-                                )}
-                              </span>
+                        <span className="text-xs text-slate-600 shrink-0 ml-3">
+                          {team.players.length} players
+                        </span>
+                      )}
+                    </summary>
+
+                    {/* Expanded content */}
+                    <div className="pl-10 pr-4 pb-5 pt-3 border-t border-slate-800/60 space-y-4">
+                      {/* Venue details */}
+                      {team.venueName && (
+                        <div>
+                          <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Venue</p>
+                          <p className="text-sm text-amber-400 leading-snug">{team.venueName}</p>
+                          {team.venueAddress && (
+                            <p className="text-xs text-slate-500 mt-0.5">{team.venueAddress}</p>
+                          )}
+                          {team.venuePhone && (
+                            <a
+                              href={`tel:${team.venuePhone}`}
+                              className="text-xs text-slate-500 hover:text-slate-300 transition-colors mt-0.5 block"
+                            >
+                              {team.venuePhone}
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Roster grid */}
+                      {team.players.length > 0 && (
+                        <div>
+                          <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-2">Roster</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5">
+                            {team.players.map((p) => (
+                              <Link
+                                key={p.id}
+                                href={`/players/${p.id}?season=${activeId}`}
+                                className="text-sm text-slate-300 hover:text-amber-400 transition-colors truncate"
+                              >
+                                {p.name}
+                              </Link>
                             ))}
-                          </p>
+                          </div>
                         </div>
                       )}
                     </div>
-                  </div>
+                  </details>
                 ))}
               </div>
             </div>

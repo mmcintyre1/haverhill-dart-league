@@ -31,7 +31,10 @@ export default function VenueToggle({
             : "cursor-default"
         }`}
       >
-        <span className="text-slate-400 shrink-0">📍</span>
+        <svg className="shrink-0 text-slate-400" width="11" height="13" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2C7.58 2 4 5.58 4 10c0 6.5 8 16 8 16s8-9.5 8-16c0-4.42-3.58-8-8-8z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
         <span className="truncate text-amber-400">{name}</span>
         {showCity && city && (
           <span className="text-white shrink-0">· {city}</span>
