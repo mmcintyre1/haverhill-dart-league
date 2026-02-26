@@ -650,14 +650,12 @@ export async function fetchTeamVenues(
         /<div class="text-xl font-bold">Venue Address<\/div>\s*<div>\s*<div class="space-y-1">([\s\S]*?)<\/div>\s*<\/div>/
       );
 
-      // Build address from all spans inside the block.
+      // Address: first span only — subsequent spans/anchors are "Get Directions" UI, not data.
       let address = "";
       if (addressBlockM) {
-        const spans = [...addressBlockM[1].matchAll(/<span>([^<]+)<\/span>/g)]
-          .map((s) => s[1].trim())
-          .filter(Boolean);
-        if (spans.length > 0) {
-          address = normalizeAddress(cleanAddress(spans.join(", ")));
+        const firstSpan = addressBlockM[1].match(/<span>([^<]+)<\/span>/);
+        if (firstSpan) {
+          address = normalizeAddress(cleanAddress(firstSpan[1].trim()));
         }
       }
 
