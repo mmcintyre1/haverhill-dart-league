@@ -40,6 +40,7 @@ async function getAllMatches(seasonId: number) {
       homeScore: matches.homeScore,
       awayScore: matches.awayScore,
       prettyDate: matches.prettyDate,
+      dcGuid: matches.dcGuid,
       homeTeamVenueName: homeTeams.venueName,
       homeTeamVenueAddress: homeTeams.venueAddress,
       homeTeamVenuePhone: homeTeams.venuePhone,
@@ -186,18 +187,18 @@ export default async function MatchesPage({
                       >
                         {/* Division badge */}
                         <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
-                        {/* Away team — right-aligned into the @ */}
-                        <span className="flex-1 min-w-0 text-slate-200 font-medium text-right truncate pr-1">
+                        {/* Away team — capped width, right-aligned into the @ */}
+                        <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium text-right truncate pr-1">
                           {m.awayTeamName}
                         </span>
                         {/* @ separator */}
                         <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
-                        {/* Home team — left-aligned away from the @ */}
-                        <span className="flex-1 min-w-0 text-slate-200 font-medium truncate pl-1">
+                        {/* Home team — capped width, left-aligned away from the @ */}
+                        <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium truncate pl-1">
                           {m.homeTeamName}
                         </span>
-                        {/* Venue — fixed width, pipe separator, always reserves space for alignment */}
-                        <div className="hidden sm:block w-48 shrink-0 ml-3 pl-3 border-l border-slate-700/60 min-w-0">
+                        {/* Venue — flex-1 so it absorbs leftover space from capped team columns */}
+                        <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
                           {m.homeTeamVenueName && (
                             <VenueToggle
                               name={m.homeTeamVenueName}
@@ -250,9 +251,10 @@ export default async function MatchesPage({
                   <table className="w-full table-fixed text-sm border-collapse">
                     <colgroup>
                       <col className="w-12" />
-                      <col className="w-[40%]" />
+                      <col className="w-[38%]" />
                       <col className="w-24" />
-                      <col className="w-[40%]" />
+                      <col className="w-[38%]" />
+                      <col className="w-8" />
                     </colgroup>
                     <tbody>
                       {ms.map((m) => {
@@ -291,6 +293,23 @@ export default async function MatchesPage({
                               }`}
                             >
                               {m.awayTeamName}
+                            </td>
+                            <td className="pr-2 py-2.5 text-right">
+                              {m.dcGuid && (
+                                <a
+                                  href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label="View on DartConnect"
+                                  className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center"
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <circle cx="12" cy="12" r="5"/>
+                                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                  </svg>
+                                </a>
+                              )}
                             </td>
                           </tr>
                         );

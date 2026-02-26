@@ -279,10 +279,14 @@ export default async function StandingsPage({
                                     href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-slate-600 hover:text-sky-400 transition-colors text-xs"
-                                    title="View match recap on DartConnect"
+                                    aria-label="View on DartConnect"
+                                    className="text-red-700 hover:text-red-500 transition-colors"
                                   >
-                                    ↗
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <circle cx="12" cy="12" r="10"/>
+                                      <circle cx="12" cy="12" r="5"/>
+                                      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                    </svg>
                                   </a>
                                 )}
                               </div>

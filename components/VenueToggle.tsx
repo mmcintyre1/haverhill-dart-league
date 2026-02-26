@@ -6,32 +6,42 @@ export default function VenueToggle({
   name,
   address,
   phone,
+  showCity = true,
 }: {
   name: string;
   address?: string | null;
   phone?: string | null;
+  showCity?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasDetails = !!(address || phone);
 
+  // Extract city from normalized "Street, City, MA Zip" address
+  const cityPart = address ? address.split(",")[1]?.trim() : null;
+  const city = cityPart && /^[A-Za-z]/.test(cityPart) ? cityPart : null;
+
   return (
-    <div className="text-xs">
+    <div className="text-xs min-w-0">
       <button
         type="button"
         onClick={() => hasDetails && setOpen((o) => !o)}
-        className={`text-left leading-snug ${
+        className={`text-left w-full flex items-center gap-1 min-w-0 leading-snug ${
           hasDetails
-            ? "text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-            : "text-slate-500 cursor-default"
+            ? "hover:opacity-80 transition-opacity cursor-pointer"
+            : "cursor-default"
         }`}
       >
-        {name}
+        <span className="text-slate-400 shrink-0">📍</span>
+        <span className="truncate text-amber-400">{name}</span>
+        {showCity && city && (
+          <span className="text-white shrink-0">· {city}</span>
+        )}
         {hasDetails && (
-          <span className="ml-1 text-slate-600">{open ? "▴" : "▾"}</span>
+          <span className="text-slate-500 shrink-0">{open ? "▴" : "▾"}</span>
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-0.5 text-slate-500">
+        <div className="mt-1 space-y-0.5 text-slate-500 pl-4">
           {address && <p>{address}</p>}
           {phone && (
             <a

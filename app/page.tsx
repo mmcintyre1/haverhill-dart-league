@@ -1,4 +1,5 @@
 import Link from "next/link";
+import VenueToggle from "@/components/VenueToggle";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -34,6 +35,8 @@ async function getNextRound(seasonId: number) {
       homeTeamName: matches.homeTeamName,
       awayTeamName: matches.awayTeamName,
       homeTeamVenueName: homeTeams.venueName,
+      homeTeamVenueAddress: homeTeams.venueAddress,
+      homeTeamVenuePhone: homeTeams.venuePhone,
     })
     .from(matches)
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
@@ -194,17 +197,26 @@ export default async function HomePage() {
                 {nextRound.matches.map((m) => (
                   <div
                     key={m.id}
-                    className="px-4 py-2.5 flex items-center gap-2 text-sm"
+                    className="px-3 py-2.5 flex items-center text-sm"
                   >
-                    <span className="text-slate-500 text-xs w-6 shrink-0">{m.divisionName}</span>
-                    <span className="text-right flex-1 min-w-0">
-                      <span className="text-slate-300 font-medium block truncate">{m.homeTeamName}</span>
-                      {m.homeTeamVenueName && (
-                        <span className="text-slate-600 text-xs block truncate">{m.homeTeamVenueName}</span>
-                      )}
+                    <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName}</span>
+                    <span className="flex-1 min-w-0 text-slate-200 font-medium text-right truncate pr-1">
+                      {m.awayTeamName}
                     </span>
-                    <span className="text-slate-600 text-xs shrink-0">vs</span>
-                    <span className="text-slate-300 font-medium flex-1 truncate">{m.awayTeamName}</span>
+                    <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                    <span className="flex-1 min-w-0 text-slate-200 font-medium truncate pl-1">
+                      {m.homeTeamName}
+                    </span>
+                    <div className="hidden lg:block w-40 shrink-0 ml-2 pl-2 border-l border-slate-700/60 min-w-0">
+                      {m.homeTeamVenueName && (
+                        <VenueToggle
+                          name={m.homeTeamVenueName}
+                          address={m.homeTeamVenueAddress}
+                          phone={m.homeTeamVenuePhone}
+                          showCity={false}
+                        />
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -234,9 +246,9 @@ export default async function HomePage() {
                   return (
                     <div
                       key={m.id}
-                      className="px-4 py-2.5 flex items-center gap-2 text-sm"
+                      className="px-3 py-2.5 flex items-center gap-2 text-sm"
                     >
-                      <span className="text-slate-500 text-xs w-6 shrink-0">{m.divisionName}</span>
+                      <span className="text-slate-500 text-xs w-5 shrink-0">{m.divisionName}</span>
                       <span className={`flex-1 text-right truncate font-medium ${hw ? "text-white" : "text-slate-400"}`}>
                         {m.homeTeamName}
                       </span>
@@ -245,6 +257,23 @@ export default async function HomePage() {
                       </span>
                       <span className={`flex-1 truncate font-medium ${aw ? "text-white" : "text-slate-400"}`}>
                         {m.awayTeamName}
+                      </span>
+                      <span className="w-5 shrink-0 flex items-center justify-end">
+                        {m.dcGuid && (
+                          <a
+                            href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="View on DartConnect"
+                            className="text-red-700 hover:text-red-500 transition-colors"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <circle cx="12" cy="12" r="10"/>
+                              <circle cx="12" cy="12" r="5"/>
+                              <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            </svg>
+                          </a>
+                        )}
                       </span>
                     </div>
                   );
