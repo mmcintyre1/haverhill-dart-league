@@ -21,7 +21,8 @@
       "Bash(convert:*)",
       "Bash(winget:*)",
       "Bash(npm --version:*)",
-      "WebFetch(domain:my.dartconnect.com)"
+      "WebFetch(domain:my.dartconnect.com)",
+      "Bash(test:*)"
     ],
     "additionalDirectories": [
       "C:\\Users\\mfmci",

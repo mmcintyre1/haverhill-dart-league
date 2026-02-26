@@ -168,7 +168,7 @@ export default async function MatchesPage({
               const timeStr = formatTime(first?.schedTime ?? null);
               const label = formatRoundLabel(round, first?.schedDate);
               return (
-                <div key={round ?? dateStr} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
                   {/* Round header */}
                   <div className="bg-slate-800 px-4 py-2 flex items-center justify-between gap-3">
                     <span className="text-sm font-semibold text-slate-200">{label}</span>
@@ -241,7 +241,7 @@ export default async function MatchesPage({
               const first = ms[0];
               const label = formatRoundLabel(round, first?.schedDate);
               return (
-                <div key={round ?? dateStr} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
                   <div className="bg-slate-800 px-4 py-2">
                     <span className="text-sm font-semibold text-slate-200">
                       {label}
