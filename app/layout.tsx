@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "HDL Stats",
   },
-  icons: { apple: "/icons/icon.svg" },
+  icons: { apple: "/icons/icon-192.png" },
 };
 
 export default function RootLayout({

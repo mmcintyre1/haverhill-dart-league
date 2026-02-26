@@ -552,6 +552,12 @@ export { getCSRFCookies };
 
 // ─── Venue scraping (my.dartconnect.com schedule page) ───────────────────────
 
+function cleanAddress(addr: string): string {
+  return addr
+    .replace(/,?\s*(USA|United States of America|United States)\s*$/i, "")
+    .trim();
+}
+
 function decodeHtmlEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&")
@@ -617,7 +623,7 @@ export async function fetchTeamVenues(
         i + 1 < homeTeams.length ? homeTeams[i + 1].index : html.length;
       const section = html.slice(startIdx, endIdx);
 
-      // Venue name: two consecutive divs — concatenate them.
+      // Venue name: font-semibold div is the name; the following div is the city (ignored).
       const venueNameM = section.match(
         /<div class="font-semibold">([^<]+)<\/div>\s*<div>([^<]+)<\/div>/
       );
@@ -636,10 +642,8 @@ export async function fetchTeamVenues(
       if (result.has(teamName)) continue; // already populated from an earlier match week
 
       result.set(teamName, {
-        name: venueNameM
-          ? `${venueNameM[1].trim()} ${venueNameM[2].trim()}`.trim()
-          : "",
-        address: addressM ? addressM[1].trim() : "",
+        name: venueNameM ? venueNameM[1].trim() : "",
+        address: addressM ? cleanAddress(addressM[1].trim()) : "",
         phone: phoneM ? phoneM[1].trim() : "",
       });
     }

@@ -5,6 +5,7 @@ import { eq, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
+import VenueToggle from "@/components/VenueToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,8 @@ async function getAllMatches(seasonId: number) {
       awayScore: matches.awayScore,
       prettyDate: matches.prettyDate,
       homeTeamVenueName: homeTeams.venueName,
+      homeTeamVenueAddress: homeTeams.venueAddress,
+      homeTeamVenuePhone: homeTeams.venuePhone,
     })
     .from(matches)
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
@@ -165,48 +168,47 @@ export default async function MatchesPage({
               const label = round != null ? `Week ${round} — ${dateStr}` : dateStr;
               return (
                 <div key={round ?? dateStr} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
-                  <div className="bg-slate-800 px-4 py-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-200">
-                      {label}
-                    </span>
-                    {timeStr && <span className="text-xs text-slate-400">{timeStr}</span>}
+                  {/* Round header */}
+                  <div className="bg-slate-800 px-4 py-2 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-200">{label}</span>
+                    {timeStr && (
+                      <span className="shrink-0 text-xs text-slate-400 bg-slate-700/60 border border-slate-600/50 rounded px-2 py-0.5">
+                        {timeStr}
+                      </span>
+                    )}
                   </div>
-                  <table className="w-full table-fixed text-sm border-collapse">
-                    <colgroup>
-                      <col className="w-12" />
-                      <col className="w-[43%]" />
-                      <col className="w-8" />
-                      <col className="w-[43%]" />
-                    </colgroup>
-                    <tbody>
-                      {ms.map((m) => (
-                        <tr
-                          key={m.id}
-                          className="border-t border-slate-700/50 bg-slate-900 hover:bg-slate-800/60 transition-colors"
-                        >
-                          <td className="px-3 py-2.5 text-xs text-slate-500 truncate">
-                            {m.divisionName ?? ""}
-                          </td>
-                          <td className="px-3 py-2.5 font-medium text-slate-200 text-right truncate">
-                            {m.awayTeamName}
-                          </td>
-                          <td className="py-2.5 text-center text-slate-500 text-xs font-semibold">
-                            @
-                          </td>
-                          <td className="px-3 py-2.5 truncate">
-                            <span className="font-medium text-slate-200 block truncate">
-                              {m.homeTeamName}
-                            </span>
-                            {m.homeTeamVenueName && (
-                              <span className="block text-xs text-slate-500 truncate">
-                                @ {m.homeTeamVenueName}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  {/* Match rows */}
+                  <div className="divide-y divide-slate-700/50">
+                    {ms.map((m) => (
+                      <div
+                        key={m.id}
+                        className="bg-slate-900 hover:bg-slate-800/60 transition-colors px-4 py-2.5 flex items-center text-sm"
+                      >
+                        {/* Division badge */}
+                        <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
+                        {/* Away team — right-aligned into the @ */}
+                        <span className="flex-1 min-w-0 text-slate-200 font-medium text-right truncate pr-1">
+                          {m.awayTeamName}
+                        </span>
+                        {/* @ separator */}
+                        <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                        {/* Home team — left-aligned away from the @ */}
+                        <span className="flex-1 min-w-0 text-slate-200 font-medium truncate pl-1">
+                          {m.homeTeamName}
+                        </span>
+                        {/* Venue — fixed width, pipe separator, always reserves space for alignment */}
+                        <div className="hidden sm:block w-48 shrink-0 ml-3 pl-3 border-l border-slate-700/60 min-w-0">
+                          {m.homeTeamVenueName && (
+                            <VenueToggle
+                              name={m.homeTeamVenueName}
+                              address={m.homeTeamVenueAddress}
+                              phone={m.homeTeamVenuePhone}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               );
             })}
