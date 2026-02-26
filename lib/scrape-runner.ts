@@ -377,8 +377,8 @@ async function scrapeSeasonStats(
     const meta = matchMeta.get(guid);
     if (!meta) continue;
     const { homeTeamId, awayTeamId, weekKey } = meta;
-    const homeTeamName = String(teamCompetitors.find((t) => String(t.id) === homeTeamId)?.name ?? "");
-    const awayTeamName = String(teamCompetitors.find((t) => String(t.id) === awayTeamId)?.name ?? "");
+    const homeTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === homeTeamId)));
+    const awayTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === awayTeamId)));
 
     for (const legs of sets) {
       if (legs.length === 0) continue;
@@ -974,8 +974,8 @@ async function scrapeSeasonStats(
       const meta = postMatchMeta.get(guid);
       if (!meta) continue;
       const { homeTeamId, awayTeamId, weekKey } = meta;
-      const homeTeamName = String(teamCompetitors.find((t) => String(t.id) === homeTeamId)?.name ?? "");
-      const awayTeamName = String(teamCompetitors.find((t) => String(t.id) === awayTeamId)?.name ?? "");
+      const homeTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === homeTeamId)));
+      const awayTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === awayTeamId)));
 
       for (const legs of sets) {
         if (legs.length === 0) continue;

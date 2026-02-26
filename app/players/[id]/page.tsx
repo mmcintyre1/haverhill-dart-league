@@ -1,9 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { db, seasons, players, playerStats, playerWeekStats, playerSeasonTeams, scoringConfig } from "@/lib/db";
-import { eq, and, asc, desc, or, isNull } from "drizzle-orm";
+import { db, seasons, players, playerStats, playerWeekStats, playerSeasonTeams, scoringConfig, matches } from "@/lib/db";
+import { eq, and, asc, desc, or, isNull, isNotNull } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import PhaseSelector from "@/components/PhaseSelector";
+import { formatShortDate, formatRoundLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,18 @@ async function getWeeklyRows(playerId: number, seasonId: number, phase: string) 
     .from(playerWeekStats)
     .where(and(eq(playerWeekStats.playerId, playerId), eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase)))
     .orderBy(asc(playerWeekStats.weekKey));
+}
+
+async function getWeekRoundMap(seasonId: number): Promise<Map<string, number>> {
+  const rows = await db
+    .selectDistinct({ prettyDate: matches.prettyDate, roundSeq: matches.roundSeq })
+    .from(matches)
+    .where(and(eq(matches.seasonId, seasonId), isNotNull(matches.prettyDate), isNotNull(matches.roundSeq)));
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (r.prettyDate && r.roundSeq != null) map.set(r.prettyDate, r.roundSeq);
+  }
+  return map;
 }
 
 const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
@@ -134,6 +147,16 @@ function parseWeekKey(key: string): number {
   return new Date(parseInt(y), mi, parseInt(d)).getTime();
 }
 
+// "27 Jan 2026" → "2026-01-27" so formatShortDate can handle it
+function weekKeyToIso(key: string): string | null {
+  const [d, m, y] = key.split(" ");
+  const mi = MONTH_IDX[m];
+  if (mi == null) return null;
+  const mm = String(mi + 1).padStart(2, "0");
+  const dd = String(parseInt(d)).padStart(2, "0");
+  return `${y}-${mm}-${dd}`;
+}
+
 export default async function PlayerPage({
   params,
   searchParams,
@@ -159,12 +182,13 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">No seasons available.</div>;
   }
 
-  const [{ player, stat }, weeksRaw, postExists, hhThresholds, pts] = await Promise.all([
+  const [{ player, stat }, weeksRaw, postExists, hhThresholds, pts, weekRoundMap] = await Promise.all([
     getPlayerHeader(playerId, activeId, phase),
     getWeeklyRows(playerId, activeId, phase),
     hasPlayerPostseason(playerId, activeId),
     getHhThresholds(activeId),
     getScoringPts(activeId),
+    getWeekRoundMap(activeId),
   ]);
 
   if (!player) {
@@ -313,7 +337,7 @@ export default async function PlayerPage({
                       i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
                     }`}
                   >
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap text-xs">{w.weekKey}</td>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap text-xs">{formatRoundLabel(weekRoundMap.get(w.weekKey) ?? null, weekKeyToIso(w.weekKey))}</td>
                     <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap text-xs">{w.opponentTeam ?? "—"}</td>
                     {/* Records */}
                     <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{record(w.col601Wins, w.col601Losses)}</td>
