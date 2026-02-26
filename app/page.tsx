@@ -3,6 +3,7 @@ import VenueToggle from "@/components/VenueToggle";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { formatRoundLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ async function getNextRound(seasonId: number) {
   const nextRound = pending[0].roundSeq;
   return {
     round: nextRound,
-    date: pending[0].prettyDate ?? pending[0].schedDate ?? `Week ${nextRound}`,
+    schedDate: pending[0].schedDate ?? null,
     matches: pending.filter((m) => m.roundSeq === nextRound),
   };
 }
@@ -71,7 +72,7 @@ async function getLastRound(seasonId: number) {
   const lastRound = completed[0].roundSeq;
   return {
     round: lastRound,
-    date: completed[0].prettyDate ?? completed[0].schedDate ?? `Week ${lastRound}`,
+    schedDate: completed[0].schedDate ?? null,
     matches: completed.filter((m) => m.roundSeq === lastRound),
   };
 }
@@ -190,7 +191,7 @@ export default async function HomePage() {
                   Next Up
                 </span>
                 <span className="text-xs text-slate-400">
-                  Week {nextRound.round} — {nextRound.date}
+                  {formatRoundLabel(nextRound.round, nextRound.schedDate)}
                 </span>
               </div>
               <div className="divide-y divide-slate-800">
@@ -236,7 +237,7 @@ export default async function HomePage() {
                   Last Week
                 </span>
                 <span className="text-xs text-slate-400">
-                  Week {lastRound.round} — {lastRound.date}
+                  {formatRoundLabel(lastRound.round, lastRound.schedDate)}
                 </span>
               </div>
               <div className="divide-y divide-slate-800">

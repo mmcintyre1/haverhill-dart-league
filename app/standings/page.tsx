@@ -4,6 +4,7 @@ import { divisions } from "@/lib/db/schema";
 import { eq, and, or, gt, desc, asc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
+import { formatRoundLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,8 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
 }
 
 type MatchRow = {
-  weekLabel: string;
+  roundSeq: number | null;
+  schedDate: string | null;
   opponent: string;
   teamScore: number;
   opponentScore: number;
@@ -83,11 +85,10 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     if (home) home.divisionName = home.divisionName ?? m.divisionName;
     if (away) away.divisionName = away.divisionName ?? m.divisionName;
 
-    const weekLabel = m.prettyDate ?? m.schedDate ?? "";
-
     if (home) {
       home.matchRows.push({
-        weekLabel,
+        roundSeq: m.roundSeq ?? null,
+        schedDate: m.schedDate ?? null,
         opponent: m.awayTeamName ?? "Unknown",
         teamScore: hs,
         opponentScore: as_,
@@ -101,7 +102,8 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     }
     if (away) {
       away.matchRows.push({
-        weekLabel,
+        roundSeq: m.roundSeq ?? null,
+        schedDate: m.schedDate ?? null,
         opponent: m.homeTeamName ?? "Unknown",
         teamScore: as_,
         opponentScore: hs,
@@ -251,7 +253,7 @@ export default async function StandingsPage({
                     {row.matchRows.length > 0 && (
                       <div className="border-t border-slate-800/50 bg-slate-950/50">
                         <div className="flex items-center pl-12 pr-4 py-1.5 text-[0.6rem] uppercase tracking-wider text-slate-600 border-b border-slate-800/40 gap-4">
-                          <div className="w-24 shrink-0">Date</div>
+                          <div className="w-44 shrink-0">Week / Date</div>
                           <div className="flex-1 max-w-[200px]">Opponent</div>
                           <div className="shrink-0">Result</div>
                         </div>
@@ -262,7 +264,9 @@ export default async function StandingsPage({
                               key={mi}
                               className="flex items-center pl-12 pr-4 py-1.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors gap-4"
                             >
-                              <span className="w-24 shrink-0 text-xs text-slate-500 tabular-nums">{m.weekLabel || "—"}</span>
+                              <span className="w-44 shrink-0 text-xs text-slate-500 tabular-nums">
+                                {formatRoundLabel(m.roundSeq, m.schedDate) || "—"}
+                              </span>
                               <span className="flex-1 max-w-[200px] text-xs text-slate-300 truncate">{m.opponent}</span>
                               <div className="flex items-center gap-2 shrink-0">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.65rem] font-semibold tabular-nums ${
