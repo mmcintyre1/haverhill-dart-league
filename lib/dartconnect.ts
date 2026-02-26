@@ -558,6 +558,23 @@ function cleanAddress(addr: string): string {
     .trim();
 }
 
+/**
+ * Normalize addresses from DartConnect, which sometimes stores them as
+ * "Street. , Zip City" (zip before city, no state) instead of the standard
+ * "Street, City, MA Zip". Detects the bad pattern and reformats it.
+ */
+function normalizeAddress(addr: string): string {
+  // Match "...Street... , 01234 City" — zip followed by city name, no state before zip
+  const m = addr.match(/^(.+?)\s*\.?\s*,\s*(\d{5})\s+(.+)$/);
+  if (m) {
+    const street = m[1].trim();
+    const zip = m[2];
+    const city = m[3].trim();
+    return `${street}, ${city}, MA ${zip}`;
+  }
+  return addr;
+}
+
 function decodeHtmlEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&")
@@ -628,22 +645,33 @@ export async function fetchTeamVenues(
         /<div class="font-semibold">([^<]+)<\/div>\s*<div>([^<]+)<\/div>/
       );
 
-      // Address block.
-      const addressM = section.match(
-        /<div class="text-xl font-bold">Venue Address<\/div>\s*<div>\s*<div class="space-y-1">\s*<span>([^<]+)<\/span>/
+      // Address block — collect all spans inside the space-y-1 div and join them.
+      const addressBlockM = section.match(
+        /<div class="text-xl font-bold">Venue Address<\/div>\s*<div>\s*<div class="space-y-1">([\s\S]*?)<\/div>\s*<\/div>/
       );
+
+      // Build address from all spans inside the block.
+      let address = "";
+      if (addressBlockM) {
+        const spans = [...addressBlockM[1].matchAll(/<span>([^<]+)<\/span>/g)]
+          .map((s) => s[1].trim())
+          .filter(Boolean);
+        if (spans.length > 0) {
+          address = normalizeAddress(cleanAddress(spans.join(", ")));
+        }
+      }
 
       // Phone link.
       const phoneM = section.match(/href="tel:\+1 ([\d\s()-]+)"/);
 
-      if (!venueNameM && !addressM && !phoneM) continue;
+      if (!venueNameM && !address && !phoneM) continue;
 
       const teamName = homeTeams[i].name;
       if (result.has(teamName)) continue; // already populated from an earlier match week
 
       result.set(teamName, {
         name: venueNameM ? venueNameM[1].trim() : "",
-        address: addressM ? cleanAddress(addressM[1].trim()) : "",
+        address,
         phone: phoneM ? phoneM[1].trim() : "",
       });
     }
