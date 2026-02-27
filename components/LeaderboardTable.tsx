@@ -101,11 +101,13 @@ function StatLine({
   value,
   fire,
   green,
+  amber,
 }: {
   label: string;
   value: string | number | null;
   fire?: boolean;
   green?: boolean;
+  amber?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 py-px">
@@ -116,6 +118,8 @@ function StatLine({
             ? "text-rose-400 font-semibold"
             : green
             ? "text-emerald-400 font-medium"
+            : amber
+            ? "text-amber-300 font-medium"
             : "text-slate-400"
         }`}
       >
@@ -218,6 +222,7 @@ function MobileCard({
           <StatLine
             label="3DA"
             value={row.ppr != null ? parseFloat(row.ppr).toFixed(1) : null}
+            amber
           />
           <StatLine label="01 HH" value={row.zeroOneHh} fire />
           <StatLine label="LDG" value={row.ldg} />

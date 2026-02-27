@@ -292,7 +292,100 @@ export default async function PlayerPage({
           <p className="text-sm mt-1">Run a scrape to populate week-by-week stats.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
+        <>
+          {/* ── Mobile: one card per week ── */}
+          <div className="sm:hidden space-y-2">
+            {weeks.map((w) => {
+              const setTotal = w.setWins + w.setLosses;
+              const weekAvg = setTotal > 0 ? `${(w.setWins / setTotal * 100).toFixed(1)}%` : null;
+              const weekPts = w.crktWins * pts.cricket + w.col601Wins * pts["601"] + w.col501Wins * pts["501"];
+              const ppr = w.ppr != null ? parseFloat(String(w.ppr)).toFixed(1) : null;
+              const mpr = w.mpr != null ? parseFloat(String(w.mpr)).toFixed(2) : null;
+              const hhFire = w.hundredPlus >= hhThreshold.hh;
+              const rndsFire = w.rnds >= hhThreshold.roHh;
+              return (
+                <div key={w.id} className="rounded-lg border border-slate-800 bg-slate-900 p-3 space-y-2">
+                  {/* Header: week label + summary */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-300 leading-snug">
+                        {formatRoundLabel(weekRoundMap.get(w.weekKey) ?? null, weekKeyToIso(w.weekKey))}
+                      </p>
+                      {w.opponentTeam && (
+                        <p className="text-xs text-slate-500 mt-0.5">vs {w.opponentTeam}</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <span className="text-amber-400 font-bold tabular-nums">
+                        {weekPts > 0 ? (Number.isInteger(weekPts) ? weekPts : weekPts.toFixed(1)) : "—"}
+                      </span>
+                      <span className="text-slate-500 text-xs ml-1">pts</span>
+                      {weekAvg && (
+                        <span className="text-amber-300/80 tabular-nums text-xs ml-2">{weekAvg}</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Records */}
+                  <div className="flex gap-4 text-xs">
+                    {([["CRKT", record(w.crktWins, w.crktLosses)], ["601", record(w.col601Wins, w.col601Losses)], ["501", record(w.col501Wins, w.col501Losses)]] as [string, string][]).map(([label, val]) => (
+                      <div key={label} className="flex gap-1.5">
+                        <span className="text-slate-600">{label}</span>
+                        <span className="text-slate-300 tabular-nums">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Stats grid */}
+                  <div className="grid grid-cols-2 gap-x-6 text-xs pt-2 border-t border-slate-800/80">
+                    <div>
+                      <p className="text-[0.6rem] uppercase tracking-wider text-slate-600 font-semibold mb-1.5">01 Games</p>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">100+</span>
+                        <span className={`tabular-nums ${hhFire ? "text-rose-400 font-semibold" : "text-slate-400"}`}>
+                          {w.hundredPlus > 0 ? `${w.hundredPlus}${hhFire ? " 🔥" : ""}` : "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">180</span>
+                        <span className="text-slate-400 tabular-nums">{w.oneEighty > 0 ? w.oneEighty : "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">H Out</span>
+                        <span className="text-slate-400 tabular-nums">{w.hOut > 0 ? w.hOut : "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">3DA</span>
+                        <span className="text-amber-300 font-medium tabular-nums">{ppr ?? "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">LDG</span>
+                        <span className="text-slate-400 tabular-nums">{w.ldg > 0 ? w.ldg : "—"}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[0.6rem] uppercase tracking-wider text-slate-600 font-semibold mb-1.5">Cricket</p>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">RNDS</span>
+                        <span className={`tabular-nums ${rndsFire ? "text-rose-400 font-semibold" : "text-slate-400"}`}>
+                          {w.rnds > 0 ? `${w.rnds}${rndsFire ? " 🔥" : ""}` : "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">RO9</span>
+                        <span className="text-slate-400 tabular-nums">{w.ro9 > 0 ? w.ro9 : "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-px">
+                        <span className="text-slate-600 shrink-0">MPR</span>
+                        <span className="text-emerald-400 font-medium tabular-nums">{mpr ?? "—"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Desktop: scrollable table ── */}
+          <div className="hidden sm:block overflow-x-auto rounded-lg border border-slate-800 shadow-2xl">
           <table className="w-full text-sm border-collapse">
             <thead>
               {/* Group headers */}
@@ -373,7 +466,8 @@ export default async function PlayerPage({
               })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
