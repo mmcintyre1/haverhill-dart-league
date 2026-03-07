@@ -4,7 +4,7 @@ import { divisions } from "@/lib/db/schema";
 import { eq, and, or, gt, desc, asc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
-import { formatRoundLabel } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -265,7 +265,7 @@ export default async function StandingsPage({
                               className="flex items-center pl-12 pr-4 py-1.5 border-t border-slate-800/30 hover:bg-slate-800/30 transition-colors gap-4"
                             >
                               <span className="w-44 shrink-0 text-xs text-slate-500 tabular-nums">
-                                {formatRoundLabel(m.roundSeq, m.schedDate) || "—"}
+                                {formatShortDate(m.schedDate) || "—"}
                               </span>
                               <span className="flex-1 max-w-[200px] text-xs text-slate-300 truncate">{m.opponent}</span>
                               <div className="flex items-center gap-2 shrink-0">

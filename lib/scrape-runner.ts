@@ -24,21 +24,16 @@ import {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseCricketMarks(notation: unknown): number {
-  if (typeof notation !== "string") return 0;
-  const re = /([TDS](?:B|[0-9]+))(?:x([0-9]))?/g;
-  let marks = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(notation)) !== null) {
-    const hit = m[1];
-    const rep = m[2] ? parseInt(m[2]) : 1;
-    if (hit === "DB") marks += 2 * rep;
-    else if (hit === "SB") marks += 1 * rep;
-    else if (hit[0] === "T") marks += 3 * rep;
-    else if (hit[0] === "D") marks += 2 * rep;
-    else if (hit[0] === "S") marks += 1 * rep;
-  }
-  return marks;
+/** Parse DC's notable field for cricket turns.
+ *  DC pre-computes effective marks accounting for closed targets.
+ *  Format: "6M" = 6 marks, "4B" = 4 bull marks, "9M" = round of 9. */
+function parseCricketNotable(notable: string | null | undefined): { marks: number; bulls: number } {
+  if (!notable) return { marks: 0, bulls: 0 };
+  const mMatch = notable.match(/^(\d+)M$/);
+  if (mMatch) return { marks: parseInt(mMatch[1]), bulls: 0 };
+  const bMatch = notable.match(/^(\d+)B$/);
+  if (bMatch) return { marks: 0, bulls: parseInt(bMatch[1]) };
+  return { marks: 0, bulls: 0 };
 }
 
 function gameType(gameName: string): "601" | "501" | "crkt" | "other" {
@@ -107,6 +102,7 @@ interface PlayerAccum {
   zeroOneDartsTotal: number;
   crktMarksTotal: number;
   crktDartsTotal: number;
+  ro6b: number;
   weekHundredPlus: Map<string, number>;
   weeksPlayed: Set<string>;
   opponentNames: string[];
@@ -123,6 +119,7 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     hundredPlus: 0, cricketRnds: 0, oneEighty: 0, ro9: 0, hOut: 0, minDarts501: 999,
     zeroOnePointsTotal: 0, zeroOneDartsTotal: 0,
     crktMarksTotal: 0, crktDartsTotal: 0,
+    ro6b: 0,
     weekHundredPlus: new Map(),
     weeksPlayed: new Set(),
     opponentNames: [],
@@ -371,8 +368,6 @@ async function scrapeSeasonStats(
     includePerfect: g3CfgMap["g3.include_perfect"] === "true",  // default false
   };
 
-  const sampleCricketScores: string[] = [];
-
   for (const [guid, sets] of segmentsMap) {
     const meta = matchMeta.get(guid);
     if (!meta) continue;
@@ -437,13 +432,6 @@ async function scrapeSeasonStats(
             const is01 = type === "601" || type === "501";
             const isCrkt = type === "crkt";
             const score01 = is01 ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
-            const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
-
-            if (isCrkt && t.turn_score != null && sampleCricketScores.length < 20) {
-              const sc = String(t.turn_score);
-              if (!sampleCricketScores.includes(sc)) sampleCricketScores.push(sc);
-            }
-
             const remaining = t.current_score;
             const w = acc.weekStats.get(weekKey);
 
@@ -457,11 +445,20 @@ async function scrapeSeasonStats(
               if (score01 > acc.hOut) acc.hOut = score01;
               if (w && score01 > w.hOut) w.hOut = score01;
             }
-            if (isCrkt && crktMarks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && crktMarks === 9))) {
-              acc.cricketRnds += crktMarks;
-              if (w) w.rnds += crktMarks;
+            if (isCrkt) {
+              // Use DC's notable field — it already accounts for closed targets
+              const { marks, bulls } = parseCricketNotable(t.notable);
+              if (marks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && marks === 9))) {
+                acc.cricketRnds += marks;
+                if (w) w.rnds += marks;
+              }
+              if (marks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
+              if (bulls >= 6 && (!isCrktG3 || g3.includeRnds)) {
+                acc.cricketRnds += bulls;
+                if (w) w.rnds += bulls;
+              }
+              if (bulls >= 6) { acc.ro6b++; }
             }
-            if (isCrkt && crktMarks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
           }
         }
 
@@ -719,7 +716,6 @@ async function scrapeSeasonStats(
     matchScoresUpdated++;
   }
   debug.matchScoresUpdated = matchScoresUpdated;
-  debug.sampleCricketScores = sampleCricketScores;
 
   // ── J. Fetch season MPR from leaderboard API ────────────────────────────────
   const leaderboardMprByName = new Map<string, string>();
@@ -752,7 +748,7 @@ async function scrapeSeasonStats(
     const [player] = await db
       .insert(players)
       .values({ dcGuid: dcId, name: playerName })
-      .onConflictDoUpdate({ target: players.name, set: { dcGuid: dcId } })
+      .onConflictDoUpdate({ target: players.dcGuid, set: { name: playerName } })
       .returning({ id: players.id });
 
     const playerId = player.id;
@@ -842,7 +838,7 @@ async function scrapeSeasonStats(
       ro9:         acc?.ro9          ?? 0,
       hOut:        acc?.hOut         ?? 0,
       ldg:         acc && acc.minDarts501 < 999 ? acc.minDarts501 : null,
-      ro6b:        0,
+      ro6b:        acc?.ro6b         ?? 0,
       mpr: leaderboardMprByName.get(playerName) ??
         (acc && acc.crktDartsTotal > 0
           ? ((acc.crktMarksTotal * 3) / acc.crktDartsTotal).toFixed(2)
@@ -1028,7 +1024,6 @@ async function scrapeSeasonStats(
               const is01   = type === "601" || type === "501";
               const isCrkt = type === "crkt";
               const score01   = is01   ? (typeof t.turn_score === "number" ? t.turn_score : Number(t.turn_score ?? 0)) : 0;
-              const crktMarks = isCrkt ? parseCricketMarks(t.turn_score) : 0;
               const remaining = t.current_score;
               const w = acc.weekStats.get(weekKey);
               if (is01 && score01 >= 100 && (!is501Tiebreaker || g3.include100p || (g3.includePerfect && score01 === 180))) {
@@ -1041,11 +1036,19 @@ async function scrapeSeasonStats(
                 if (score01 > acc.hOut) acc.hOut = score01;
                 if (w && score01 > w.hOut) w.hOut = score01;
               }
-              if (isCrkt && crktMarks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && crktMarks === 9))) {
-                acc.cricketRnds += crktMarks;
-                if (w) w.rnds += crktMarks;
+              if (isCrkt) {
+                const { marks, bulls } = parseCricketNotable(t.notable);
+                if (marks >= 6 && (!isCrktG3 || g3.includeRnds || (g3.includePerfect && marks === 9))) {
+                  acc.cricketRnds += marks;
+                  if (w) w.rnds += marks;
+                }
+                if (marks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
+                if (bulls >= 6 && (!isCrktG3 || g3.includeRnds)) {
+                  acc.cricketRnds += bulls;
+                  if (w) w.rnds += bulls;
+                }
+                if (bulls >= 6) { acc.ro6b++; }
               }
-              if (isCrkt && crktMarks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
             }
           }
           if (type === "501") {
@@ -1110,7 +1113,7 @@ async function scrapeSeasonStats(
       const [player] = await db
         .insert(players)
         .values({ dcGuid: dcId, name: playerName })
-        .onConflictDoUpdate({ target: players.name, set: { dcGuid: dcId } })
+        .onConflictDoUpdate({ target: players.dcGuid, set: { name: playerName } })
         .returning({ id: players.id });
       const playerId = player.id;
 
@@ -1148,7 +1151,7 @@ async function scrapeSeasonStats(
         ro9:  acc?.ro9  ?? 0,
         hOut: acc?.hOut ?? 0,
         ldg:  acc && acc.minDarts501 < 999 ? acc.minDarts501 : null,
-        ro6b: 0,
+        ro6b: acc?.ro6b ?? 0,
         mpr: acc && acc.crktDartsTotal > 0
           ? ((acc.crktMarksTotal * 3) / acc.crktDartsTotal).toFixed(2)
           : null,

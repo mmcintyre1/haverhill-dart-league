@@ -3,7 +3,7 @@ import VenueToggle from "@/components/VenueToggle";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { formatRoundLabel } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -191,7 +191,7 @@ export default async function HomePage() {
                   Next Up
                 </span>
                 <span className="text-xs text-slate-400">
-                  {formatRoundLabel(nextRound.round, nextRound.schedDate)}
+                  {formatShortDate(nextRound.schedDate)}
                 </span>
               </div>
               <div className="divide-y divide-slate-800">
@@ -237,7 +237,7 @@ export default async function HomePage() {
                   Last Week
                 </span>
                 <span className="text-xs text-slate-400">
-                  {formatRoundLabel(lastRound.round, lastRound.schedDate)}
+                  {formatShortDate(lastRound.schedDate)}
                 </span>
               </div>
               <div className="divide-y divide-slate-800">

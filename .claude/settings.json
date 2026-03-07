@@ -26,7 +26,8 @@
     ],
     "additionalDirectories": [
       "C:\\Users\\mfmci",
-      "c:\\Users\\mfmci\\OneDrive\\Desktop\\projects\\haverhill-dart-league\\app\\players"
+      "c:\\Users\\mfmci\\OneDrive\\Desktop\\projects\\haverhill-dart-league\\app\\players",
+      "\\tmp"
     ]
   }
 }

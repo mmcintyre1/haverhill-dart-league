@@ -6,7 +6,7 @@ import { alias } from "drizzle-orm/pg-core";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import VenueToggle from "@/components/VenueToggle";
-import { formatRoundLabel } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -166,7 +166,7 @@ export default async function MatchesPage({
             {upcomingRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
               const timeStr = formatTime(first?.schedTime ?? null);
-              const label = formatRoundLabel(round, first?.schedDate);
+              const label = formatShortDate(first?.schedDate);
               return (
                 <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
                   {/* Round header */}
@@ -239,7 +239,7 @@ export default async function MatchesPage({
           <div className="space-y-4">
             {resultsRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
-              const label = formatRoundLabel(round, first?.schedDate);
+              const label = formatShortDate(first?.schedDate);
               return (
                 <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
                   <div className="bg-slate-800 px-4 py-2">

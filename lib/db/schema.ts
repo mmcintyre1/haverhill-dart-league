@@ -68,10 +68,10 @@ export const players = pgTable(
   "players",
   {
     id: serial("id").primaryKey(),
-    dcGuid: text("dc_guid"),
+    dcGuid: text("dc_guid"),  // DC numeric player ID (string). Unique; NULL allowed for manually-added players.
     name: text("name").notNull(),
   },
-  (t) => [uniqueIndex("players_name_idx").on(t.name)]
+  (t) => [uniqueIndex("players_dcguid_idx").on(t.dcGuid)]
 );
 
 // ─── Player Stats (one row per player per season) ─────────────────────────────

@@ -4,7 +4,7 @@ import { db, seasons, players, playerStats, playerWeekStats, playerSeasonTeams, 
 import { eq, and, asc, desc, or, isNull, isNotNull } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import PhaseSelector from "@/components/PhaseSelector";
-import { formatShortDate, formatRoundLabel } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -64,17 +64,6 @@ async function getWeeklyRows(playerId: number, seasonId: number, phase: string) 
     .orderBy(asc(playerWeekStats.weekKey));
 }
 
-async function getWeekRoundMap(seasonId: number): Promise<Map<string, number>> {
-  const rows = await db
-    .selectDistinct({ prettyDate: matches.prettyDate, roundSeq: matches.roundSeq })
-    .from(matches)
-    .where(and(eq(matches.seasonId, seasonId), isNotNull(matches.prettyDate), isNotNull(matches.roundSeq)));
-  const map = new Map<string, number>();
-  for (const r of rows) {
-    if (r.prettyDate && r.roundSeq != null) map.set(r.prettyDate, r.roundSeq);
-  }
-  return map;
-}
 
 const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
   A: { hh: 475, roHh: 20 },
@@ -182,13 +171,12 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">No seasons available.</div>;
   }
 
-  const [{ player, stat }, weeksRaw, postExists, hhThresholds, pts, weekRoundMap] = await Promise.all([
+  const [{ player, stat }, weeksRaw, postExists, hhThresholds, pts] = await Promise.all([
     getPlayerHeader(playerId, activeId, phase),
     getWeeklyRows(playerId, activeId, phase),
     hasPlayerPostseason(playerId, activeId),
     getHhThresholds(activeId),
     getScoringPts(activeId),
-    getWeekRoundMap(activeId),
   ]);
 
   if (!player) {
@@ -309,7 +297,7 @@ export default async function PlayerPage({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-slate-300 leading-snug">
-                        {formatRoundLabel(weekRoundMap.get(w.weekKey) ?? null, weekKeyToIso(w.weekKey))}
+                        {formatShortDate(weekKeyToIso(w.weekKey))}
                       </p>
                       {w.opponentTeam && (
                         <p className="text-xs text-slate-500 mt-0.5">vs {w.opponentTeam}</p>
@@ -430,7 +418,7 @@ export default async function PlayerPage({
                       i % 2 === 0 ? "bg-slate-900" : "bg-slate-900/60"
                     }`}
                   >
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap text-xs">{formatRoundLabel(weekRoundMap.get(w.weekKey) ?? null, weekKeyToIso(w.weekKey))}</td>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap text-xs">{formatShortDate(weekKeyToIso(w.weekKey))}</td>
                     <td className="px-2 py-1.5 text-slate-400 whitespace-nowrap text-xs">{w.opponentTeam ?? "—"}</td>
                     {/* Records */}
                     <td className="px-2 py-1.5 text-center text-slate-400 tabular-nums border-l border-slate-800">{record(w.col601Wins, w.col601Losses)}</td>
