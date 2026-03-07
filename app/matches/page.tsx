@@ -65,7 +65,7 @@ function groupByRound<T extends { roundSeq: number | null; schedDate: string | n
   const map = new Map<string, { round: number | null; matches: T[] }>();
   for (const m of items) {
     // Primary key: roundSeq. Fallback: schedDate (past seasons without round numbers).
-    const key = m.roundSeq != null ? `r:${m.roundSeq}` : `d:${m.schedDate ?? "unknown"}`;
+    const key = m.roundSeq != null ? `r:${m.roundSeq}:${m.schedDate ?? ""}` : `d:${m.schedDate ?? "unknown"}`;
     if (!map.has(key)) map.set(key, { round: m.roundSeq, matches: [] });
     map.get(key)!.matches.push(m);
   }

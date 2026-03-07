@@ -21,6 +21,7 @@ async function getPlayerHeader(playerId: number, seasonId: number, phase: string
 
   const [stat] = await db
     .select({
+      teamId: playerSeasonTeams.teamId,
       teamName: playerSeasonTeams.teamName,
       divisionName: playerSeasonTeams.divisionName,
       setWins: playerStats.pts,
@@ -62,6 +63,23 @@ async function getWeeklyRows(playerId: number, seasonId: number, phase: string) 
     .from(playerWeekStats)
     .where(and(eq(playerWeekStats.playerId, playerId), eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase)))
     .orderBy(asc(playerWeekStats.weekKey));
+}
+
+async function getMatchGuidMap(seasonId: number, teamId: number): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ prettyDate: matches.prettyDate, dcGuid: matches.dcGuid })
+    .from(matches)
+    .where(and(
+      eq(matches.seasonId, seasonId),
+      or(eq(matches.homeTeamId, teamId), eq(matches.awayTeamId, teamId)),
+      isNotNull(matches.dcGuid),
+      isNotNull(matches.prettyDate)
+    ));
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    if (r.prettyDate && r.dcGuid) map.set(r.prettyDate, r.dcGuid);
+  }
+  return map;
 }
 
 
@@ -178,6 +196,10 @@ export default async function PlayerPage({
     getHhThresholds(activeId),
     getScoringPts(activeId),
   ]);
+
+  const matchGuidMap = stat?.teamId
+    ? await getMatchGuidMap(activeId, stat.teamId)
+    : new Map<string, string>();
 
   if (!player) {
     return <div className="text-slate-400 py-16 text-center">Player not found.</div>;
@@ -303,7 +325,22 @@ export default async function PlayerPage({
                         <p className="text-xs text-slate-500 mt-0.5">vs {w.opponentTeam}</p>
                       )}
                     </div>
-                    <div className="shrink-0 text-right">
+                    <div className="shrink-0 text-right flex items-center gap-2">
+                      {matchGuidMap.get(w.weekKey) && (
+                        <a
+                          href={`https://recap.dartconnect.com/games/${matchGuidMap.get(w.weekKey)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="View on DartConnect"
+                          className="text-red-700 hover:text-red-500 transition-colors"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="5"/>
+                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                          </svg>
+                        </a>
+                      )}
                       <span className="text-amber-400 font-bold tabular-nums">
                         {weekPts > 0 ? (Number.isInteger(weekPts) ? weekPts : weekPts.toFixed(1)) : "—"}
                       </span>
@@ -383,6 +420,7 @@ export default async function PlayerPage({
                 <th colSpan={5} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">01 Games</th>
                 <th colSpan={3} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-slate-600 border-l border-slate-700/60 font-semibold">Cricket</th>
                 <th colSpan={2} className="px-2 py-1 text-center text-[0.6rem] uppercase tracking-wider text-amber-600/70 border-l border-slate-700/60 font-semibold">Summary</th>
+                <th colSpan={1} className="px-2 py-1" />
               </tr>
               {/* Column headers */}
               <tr className="bg-slate-950 border-b border-slate-700/80">
@@ -405,6 +443,7 @@ export default async function PlayerPage({
                 {/* Summary */}
                 <th className="px-2 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-amber-500/80 border-l border-slate-700/60" title="Set win % this week">AVG</th>
                 <th className="px-2 py-2 text-center font-medium whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-amber-500/80" title="Set wins this week">PTS</th>
+                <th className="w-6 px-2 py-2" />
               </tr>
             </thead>
             <tbody>
@@ -449,6 +488,23 @@ export default async function PlayerPage({
                       if (v === 0) return "—";
                       return Number.isInteger(v) ? v : v.toFixed(1);
                     })()}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      {matchGuidMap.get(w.weekKey) && (
+                        <a
+                          href={`https://recap.dartconnect.com/games/${matchGuidMap.get(w.weekKey)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="View on DartConnect"
+                          className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="5"/>
+                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                          </svg>
+                        </a>
+                      )}
+                    </td>
                   </tr>
                 );
               })}

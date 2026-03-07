@@ -47,10 +47,11 @@ async function getNextRound(seasonId: number) {
 
   if (pending.length === 0) return null;
   const nextRound = pending[0].roundSeq;
+  const nextDate = pending[0].schedDate ?? null;
   return {
     round: nextRound,
-    schedDate: pending[0].schedDate ?? null,
-    matches: pending.filter((m) => m.roundSeq === nextRound),
+    schedDate: nextDate,
+    matches: pending.filter((m) => m.roundSeq === nextRound && m.schedDate === nextDate),
   };
 }
 
@@ -70,10 +71,11 @@ async function getLastRound(seasonId: number) {
 
   if (completed.length === 0) return null;
   const lastRound = completed[0].roundSeq;
+  const lastDate = completed[0].schedDate ?? null;
   return {
     round: lastRound,
-    schedDate: completed[0].schedDate ?? null,
-    matches: completed.filter((m) => m.roundSeq === lastRound),
+    schedDate: lastDate,
+    matches: completed.filter((m) => m.roundSeq === lastRound && m.schedDate === lastDate),
   };
 }
 
