@@ -363,6 +363,7 @@ async function scrapeSeasonStats(
     include180:     g3CfgMap["g3.include_180"]     !== "false", // default true
     includeRo9:     g3CfgMap["g3.include_ro9"]     !== "false", // default true
     includeHout:    g3CfgMap["g3.include_hout"]    !== "false", // default true
+    includeRo6b:    g3CfgMap["g3.include_ro6b"]    !== "false", // default true
     include100p:    g3CfgMap["g3.include_100plus"] === "true",  // default false
     includeRnds:    g3CfgMap["g3.include_rnds"]    === "true",  // default false
     includeBulls:   g3CfgMap["g3.include_bulls"]   === "true",  // default false
@@ -458,7 +459,7 @@ async function scrapeSeasonStats(
                 acc.cricketRnds += bulls;
                 if (w) w.rnds += bulls;
               }
-              if (bulls >= 6) { acc.ro6b++; }
+              if (bulls >= 6 && (!isCrktG3 || g3.includeRo6b)) { acc.ro6b++; }
             }
           }
         }
@@ -1048,7 +1049,7 @@ async function scrapeSeasonStats(
                   acc.cricketRnds += bulls;
                   if (w) w.rnds += bulls;
                 }
-                if (bulls >= 6) { acc.ro6b++; }
+                if (bulls >= 6 && (!isCrktG3 || g3.includeRo6b)) { acc.ro6b++; }
               }
             }
           }

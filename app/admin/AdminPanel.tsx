@@ -675,111 +675,78 @@ function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
               <h3 className="text-sm font-semibold text-slate-200">Game 3 (Tiebreaker) Rules</h3>
               <div className="flex-1 h-px bg-slate-800" />
             </div>
-            <p className="text-xs text-slate-500 mb-4">
-              Controls whether game 3 (tiebreaker) legs count toward each stat column.
-              <strong className="text-slate-400"> Trophy columns</strong> track individual notable achievements (always counted in G1+G2).
-              <strong className="text-slate-400"> Aggregate columns</strong> (100+, RNDS) roll up notables and drive hot-hand calculations.
+            <p className="text-xs text-slate-500 mb-5">
+              By default, game 3 (tiebreaker) legs always count toward the individual achievement
+              columns (180s, H-Outs, RO9s) but do <em>not</em> contribute to the weekly aggregate
+              totals that drive hot-hand calculations (100+, RNDS). Toggle each below.
               Changes take effect on the next data refresh.
             </p>
 
-            {/* 01 Games grid */}
-            <p className="text-[0.6rem] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">01 Games</p>
-            <div className="rounded-lg border border-slate-700/50 overflow-hidden mb-4">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-slate-800/60 border-b border-slate-700/40">
-                    <th className="px-3 py-2 text-left text-slate-400 font-medium">Notable</th>
-                    <th className="px-3 py-2 text-center text-slate-500 font-medium">Trophy col</th>
-                    <th className="px-3 py-2 text-center text-slate-500 font-medium">Agg. col</th>
-                    <th className="px-3 py-2 text-center text-amber-600/80 font-medium">G3 → trophy?</th>
-                    <th className="px-3 py-2 text-center text-amber-600/80 font-medium">G3 → aggregate?</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {([
-                    { notable: "180", trophy: "oneEighty", agg: "100+", trophyKey: "g3.include_180", trophyDefault: true,  aggKey: null },
-                    { notable: "High Out (>100 finish)", trophy: "hOut",       agg: "—",    trophyKey: "g3.include_hout",    trophyDefault: true,  aggKey: null },
-                    { notable: "100+ score",             trophy: "—",          agg: "100+", trophyKey: null,                 trophyDefault: null,  aggKey: "g3.include_100plus" },
-                  ] as const).map(({ notable, trophy, agg, trophyKey, trophyDefault, aggKey }) => (
-                    <tr key={notable} className="bg-slate-900 hover:bg-slate-800/40 transition-colors">
-                      <td className="px-3 py-2.5 text-slate-300">{notable}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500 font-mono">{trophy}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500 font-mono">{agg}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        {trophyKey ? (
-                          <input
-                            type="checkbox"
-                            checked={(g3Cfg[trophyKey] ?? (trophyDefault ? "true" : "false")) === "true"}
-                            onChange={e => setG3Cfg(prev => ({ ...prev, [trophyKey]: e.target.checked ? "true" : "false" }))}
-                            className="accent-amber-500 w-4 h-4"
-                          />
-                        ) : <span className="text-slate-700">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {aggKey ? (
-                          <input
-                            type="checkbox"
-                            checked={(g3Cfg[aggKey] ?? "false") === "true"}
-                            onChange={e => setG3Cfg(prev => ({ ...prev, [aggKey]: e.target.checked ? "true" : "false" }))}
-                            className="accent-amber-500 w-4 h-4"
-                          />
-                        ) : <span className="text-slate-700">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* Trophy columns */}
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-semibold text-slate-300">Individual achievement columns</span>
+                <div className="flex-1 h-px bg-slate-800" />
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Always recorded in G1 &amp; G2. Check to also record in game 3:</p>
+              <div className="space-y-2.5">
+                {([
+                  { key: "g3.include_180",   label: "180s",                    detail: "recorded in the 180 column",         defaultOn: true },
+                  { key: "g3.include_hout",  label: "High Outs (>100 finish)", detail: "recorded in the H-Out column",       defaultOn: true },
+                  { key: "g3.include_ro9",   label: "Rounds of 9 (cricket)",   detail: "recorded in the RO9 column",         defaultOn: true },
+                  { key: "g3.include_ro6b",  label: "6-bull rounds (cricket)", detail: "recorded in the 6B column",          defaultOn: true },
+                ] as const).map(({ key, label, detail, defaultOn }) => {
+                  const val = g3Cfg[key] ?? (defaultOn ? "true" : "false");
+                  return (
+                    <label key={key} className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={val === "true"}
+                        onChange={e => setG3Cfg(prev => ({ ...prev, [key]: e.target.checked ? "true" : "false" }))}
+                        className="accent-amber-500 w-4 h-4 shrink-0"
+                      />
+                      <span className="text-sm">
+                        <span className="text-slate-200 font-medium">{label}</span>
+                        <span className="text-slate-500 ml-1.5">— {detail}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Cricket grid */}
-            <p className="text-[0.6rem] uppercase tracking-widest text-slate-500 font-semibold mb-1.5">Cricket</p>
-            <div className="rounded-lg border border-slate-700/50 overflow-hidden mb-4">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-slate-800/60 border-b border-slate-700/40">
-                    <th className="px-3 py-2 text-left text-slate-400 font-medium">Notable</th>
-                    <th className="px-3 py-2 text-center text-slate-500 font-medium">Trophy col</th>
-                    <th className="px-3 py-2 text-center text-slate-500 font-medium">Agg. col</th>
-                    <th className="px-3 py-2 text-center text-amber-600/80 font-medium">G3 → trophy?</th>
-                    <th className="px-3 py-2 text-center text-amber-600/80 font-medium">G3 → aggregate?</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {([
-                    { notable: "Round of 9 (RO9)",    trophy: "ro9",   agg: "RNDS", trophyKey: "g3.include_ro9",  trophyDefault: true,  aggKey: null },
-                    { notable: "Bull rounds (4B+)",   trophy: "ro6b†", agg: "RNDS", trophyKey: null,              trophyDefault: null,  aggKey: "g3.include_bulls" },
-                    { notable: "6+ mark rounds",      trophy: "—",     agg: "RNDS", trophyKey: null,              trophyDefault: null,  aggKey: "g3.include_rnds" },
-                  ] as const).map(({ notable, trophy, agg, trophyKey, trophyDefault, aggKey }) => (
-                    <tr key={notable} className="bg-slate-900 hover:bg-slate-800/40 transition-colors">
-                      <td className="px-3 py-2.5 text-slate-300">{notable}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500 font-mono">{trophy}</td>
-                      <td className="px-3 py-2.5 text-center text-slate-500 font-mono">{agg}</td>
-                      <td className="px-3 py-2.5 text-center">
-                        {trophyKey ? (
-                          <input
-                            type="checkbox"
-                            checked={(g3Cfg[trophyKey] ?? (trophyDefault ? "true" : "false")) === "true"}
-                            onChange={e => setG3Cfg(prev => ({ ...prev, [trophyKey]: e.target.checked ? "true" : "false" }))}
-                            className="accent-amber-500 w-4 h-4"
-                          />
-                        ) : <span className="text-slate-700">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {aggKey ? (
-                          <input
-                            type="checkbox"
-                            checked={(g3Cfg[aggKey] ?? "false") === "true"}
-                            onChange={e => setG3Cfg(prev => ({ ...prev, [aggKey]: e.target.checked ? "true" : "false" }))}
-                            className="accent-amber-500 w-4 h-4"
-                          />
-                        ) : <span className="text-slate-700">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* Aggregate totals */}
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-semibold text-slate-300">Aggregate totals</span>
+                <span className="text-xs text-slate-600 ml-1">— drive hot hand 🔥</span>
+                <div className="flex-1 h-px bg-slate-800" />
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Always counted in G1 &amp; G2. Check to also count game 3 toward these totals:</p>
+              <div className="space-y-2.5">
+                {([
+                  { key: "g3.include_100plus", label: "100+ scores",         detail: "added to the weekly 100+ running total (01 hot hand)",     defaultOn: false },
+                  { key: "g3.include_bulls",   label: "Bull rounds (4B+)",   detail: "added to the weekly RNDS total (cricket hot hand)",         defaultOn: false },
+                  { key: "g3.include_rnds",    label: "6+ mark rounds",      detail: "added to the weekly RNDS total (cricket hot hand)",         defaultOn: false },
+                ] as const).map(({ key, label, detail, defaultOn }) => {
+                  const val = g3Cfg[key] ?? (defaultOn ? "true" : "false");
+                  return (
+                    <label key={key} className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={val === "true"}
+                        onChange={e => setG3Cfg(prev => ({ ...prev, [key]: e.target.checked ? "true" : "false" }))}
+                        className="accent-amber-500 w-4 h-4 shrink-0"
+                      />
+                      <span className="text-sm">
+                        <span className="text-slate-200 font-medium">{label}</span>
+                        <span className="text-slate-500 ml-1.5">— {detail}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
-            <p className="text-[0.65rem] text-slate-600 mb-4">† ro6b trophy column counts 6-bull rounds only; 4B and 5B rounds count only toward RNDS.</p>
 
             <div>
               <button
