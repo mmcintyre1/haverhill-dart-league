@@ -5,7 +5,7 @@ import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { formatShortDate } from "@/lib/format";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 async function getActiveSeason() {
   const [s] = await db

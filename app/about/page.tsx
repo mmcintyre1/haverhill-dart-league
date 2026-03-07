@@ -1,7 +1,7 @@
 import { db, siteContent } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 async function getContent(): Promise<{ scoring: string | null }> {
   const [row] = await db

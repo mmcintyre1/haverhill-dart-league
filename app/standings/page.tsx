@@ -6,7 +6,7 @@ import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import { formatShortDate } from "@/lib/format";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
 async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
