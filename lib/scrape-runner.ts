@@ -353,7 +353,7 @@ async function scrapeSeasonStats(
 
   // ── E0. Load game-3 / tiebreaker config ─────────────────────────────────────
   // Keys: g3.include_180, g3.include_ro9, g3.include_hout (default true)
-  //       g3.include_100plus, g3.include_rnds, g3.include_perfect (default false)
+  //       g3.include_100plus, g3.include_rnds, g3.include_bulls, g3.include_perfect (default false)
   const g3CfgRows = await db.select().from(scoringConfig)
     .where(inArray(scoringConfig.scope, ["global", String(targetSeasonId)]));
   const g3CfgMap: Record<string, string> = {};
@@ -365,6 +365,7 @@ async function scrapeSeasonStats(
     includeHout:    g3CfgMap["g3.include_hout"]    !== "false", // default true
     include100p:    g3CfgMap["g3.include_100plus"] === "true",  // default false
     includeRnds:    g3CfgMap["g3.include_rnds"]    === "true",  // default false
+    includeBulls:   g3CfgMap["g3.include_bulls"]   === "true",  // default false
     includePerfect: g3CfgMap["g3.include_perfect"] === "true",  // default false
   };
 
@@ -453,7 +454,7 @@ async function scrapeSeasonStats(
                 if (w) w.rnds += marks;
               }
               if (marks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
-              if (bulls >= 6 && (!isCrktG3 || g3.includeRnds)) {
+              if (bulls >= 4 && (!isCrktG3 || g3.includeBulls)) {
                 acc.cricketRnds += bulls;
                 if (w) w.rnds += bulls;
               }
@@ -1043,7 +1044,7 @@ async function scrapeSeasonStats(
                   if (w) w.rnds += marks;
                 }
                 if (marks === 9 && (!isCrktG3 || g3.includeRo9)) { acc.ro9++; if (w) w.ro9++; }
-                if (bulls >= 6 && (!isCrktG3 || g3.includeRnds)) {
+                if (bulls >= 4 && (!isCrktG3 || g3.includeBulls)) {
                   acc.cricketRnds += bulls;
                   if (w) w.rnds += bulls;
                 }
