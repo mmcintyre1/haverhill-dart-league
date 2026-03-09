@@ -22,6 +22,16 @@ export const handler = async (event: Event) => {
 
   try {
     await runScrape(payload, triggeredBy);
+
+    // Bust Next.js ISR cache so pages show fresh data immediately
+    const siteUrl = (process.env.URL ?? "").replace(/\/$/, "");
+    if (siteUrl) {
+      fetch(`${siteUrl}/api/revalidate`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${process.env.SCRAPE_SECRET ?? ""}` },
+      }).catch(() => {}); // fire-and-forget, non-blocking
+    }
+
     return { statusCode: 200, body: "ok" };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

@@ -1,7 +1,7 @@
 import { db, siteContent } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
-export const revalidate = 300;
+export const revalidate = 3600;
 
 async function getContent(): Promise<{ scoring: string | null }> {
   const [row] = await db

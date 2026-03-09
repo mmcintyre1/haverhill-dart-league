@@ -24,7 +24,8 @@
       "WebFetch(domain:my.dartconnect.com)",
       "Bash(test:*)",
       "Bash(for f in app/page.tsx app/matches/page.tsx \"app/players/[id]/page.tsx\" app/standings/page.tsx app/teams/page.tsx app/about/page.tsx app/leaderboard/page.tsx)",
-      "Bash(do sed -i 's/export const dynamic = \"\"force-dynamic\"\"/export const revalidate = 300/' \"$f\")"
+      "Bash(do sed -i 's/export const dynamic = \"\"force-dynamic\"\"/export const revalidate = 300/' \"$f\")",
+      "Bash(do sed -i 's/export const revalidate = 300/export const revalidate = 3600/' \"$f\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\mfmci",

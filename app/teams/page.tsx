@@ -4,7 +4,7 @@ import { db, seasons, teams, divisions, players, playerSeasonTeams } from "@/lib
 import { eq, asc, desc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 
-export const revalidate = 300;
+export const revalidate = 3600;
 
 async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
