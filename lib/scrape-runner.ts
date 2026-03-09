@@ -573,7 +573,7 @@ async function scrapeSeasonStats(
     await db
       .insert(matches)
       .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: m.division, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, seasonStatus: m.season_status, prettyDate: m.pretty_date })
-      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, updatedAt: new Date() } });
+      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, updatedAt: new Date() } });
     matchesUpdated++;
   }
 
