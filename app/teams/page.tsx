@@ -7,7 +7,7 @@ import SeasonSelector from "@/components/SeasonSelector";
 import { groupTeamSchedule, type ScheduleMatch } from "@/lib/schedule";
 import { formatShortDate } from "@/lib/format";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));

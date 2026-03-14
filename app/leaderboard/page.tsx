@@ -8,7 +8,7 @@ import DivisionSelector from "@/components/DivisionSelector";
 import PhaseSelector from "@/components/PhaseSelector";
 import ScoringGuide from "@/components/ScoringGuide";
 
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
