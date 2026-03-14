@@ -9,7 +9,7 @@ type Season = {
   lastScrapedAt: Date | null;
 };
 
-type TabId = "posts" | "refresh" | "content" | "scoring";
+type TabId = "posts" | "refresh" | "content" | "scoring" | "documents";
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     { id: "refresh", label: "Data Refresh" },
     { id: "content", label: "Site Content" },
     { id: "scoring", label: "Scoring" },
+    { id: "documents", label: "Documents" },
   ];
   return (
     <div className="flex gap-1 mb-6 border-b border-slate-800">
@@ -775,6 +776,166 @@ function ScoringTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
   );
 }
 
+// ── Documents tab ─────────────────────────────────────────────────────────────
+
+type DocRow = { id: number; title: string; url: string; category: string; description: string | null; sortOrder: number };
+
+function DocumentsTab({ secret }: { secret: string }) {
+  const [docs, setDocs] = useState<DocRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<Result | null>(null);
+  const [form, setForm] = useState({ title: "", url: "", category: "", description: "", sortOrder: "0" });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/documents", { headers: { Authorization: `Bearer ${secret}` } })
+      .then(r => r.json())
+      .then(setDocs)
+      .catch(() => setResult({ ok: false, message: "Failed to load documents." }))
+      .finally(() => setLoading(false));
+  }, [secret]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/admin/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ ...form, sortOrder: parseInt(form.sortOrder) || 0 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to add document");
+      setDocs(prev => [...prev, data.doc].sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title)));
+      setForm({ title: "", url: "", category: "", description: "", sortOrder: "0" });
+      setResult({ ok: true, message: "Document added." });
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(id: number, title: string) {
+    if (!confirm(`Delete "${title}"?`)) return;
+    try {
+      const res = await fetch(`/api/admin/documents?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+      if (!res.ok) throw new Error("Failed to delete");
+      setDocs(prev => prev.filter(d => d.id !== id));
+      setResult({ ok: true, message: `"${title}" deleted.` });
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Add form */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-300 mb-3">Add Document</h3>
+        <form onSubmit={handleAdd} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Title *</label>
+              <input
+                required
+                value={form.title}
+                onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                placeholder="League Rules 2026"
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">URL *</label>
+              <input
+                required
+                type="url"
+                value={form.url}
+                onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                placeholder="https://drive.google.com/..."
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Category</label>
+              <input
+                value={form.category}
+                onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                placeholder="Rules, Forms, General…"
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Sort order</label>
+              <input
+                type="number"
+                value={form.sortOrder}
+                onChange={e => setForm(f => ({ ...f, sortOrder: e.target.value }))}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Description (optional)</label>
+            <input
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              placeholder="Brief note about this document"
+              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-900 text-sm font-semibold disabled:opacity-50 transition-colors"
+          >
+            {saving ? "Adding…" : "Add Document"}
+          </button>
+        </form>
+      </div>
+
+      {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
+
+      {/* Document list */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-300 mb-3">
+          Current Documents {!loading && <span className="text-slate-500 font-normal">({docs.length})</span>}
+        </h3>
+        {loading ? (
+          <p className="text-slate-500 text-sm">Loading…</p>
+        ) : docs.length === 0 ? (
+          <p className="text-slate-500 text-sm italic">No documents yet.</p>
+        ) : (
+          <div className="divide-y divide-slate-800 rounded-lg border border-slate-800 overflow-hidden">
+            {docs.map(doc => (
+              <div key={doc.id} className="flex items-start gap-3 px-4 py-3 bg-slate-900 hover:bg-slate-800/50">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-white truncate">{doc.title}</span>
+                    <span className="text-[0.65rem] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 shrink-0">{doc.category}</span>
+                  </div>
+                  {doc.description && <p className="text-xs text-slate-500 mt-0.5">{doc.description}</p>}
+                  <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-slate-600 hover:text-amber-400 truncate block mt-0.5 transition-colors">{doc.url}</a>
+                </div>
+                <button
+                  onClick={() => handleDelete(doc.id, doc.title)}
+                  className="shrink-0 text-xs text-slate-600 hover:text-red-400 transition-colors px-2 py-1"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function AdminPanel({ seasons, secret }: { seasons: Season[]; secret: string }) {
@@ -785,8 +946,9 @@ export default function AdminPanel({ seasons, secret }: { seasons: Season[]; sec
       <TabBar active={tab} onChange={setTab} />
       {tab === "posts"    ? <PostsTab secret={secret} /> :
        tab === "refresh"  ? <RefreshTab seasons={seasons} secret={secret} /> :
-       tab === "scoring"  ? <ScoringTab seasons={seasons} secret={secret} /> :
-                            <ContentTab secret={secret} />}
+       tab === "scoring"   ? <ScoringTab seasons={seasons} secret={secret} /> :
+       tab === "documents" ? <DocumentsTab secret={secret} /> :
+                             <ContentTab secret={secret} />}
     </div>
   );
 }
