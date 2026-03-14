@@ -258,7 +258,7 @@ export default async function TeamsPage({
                                       const venue = isHome ? team.venueName : m.homeVenueName;
                                       return (
                                         <div key={m.id} className="flex items-center gap-2 text-xs text-slate-300">
-                                          <span className="w-20 shrink-0 text-slate-500">
+                                          <span className="w-20 shrink-0 whitespace-nowrap text-slate-500">
                                             {formatShortDate(m.schedDate)}
                                           </span>
                                           <span className={`shrink-0 px-1 py-0.5 rounded text-[0.6rem] font-semibold uppercase ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
@@ -297,7 +297,7 @@ export default async function TeamsPage({
                                       const won = teamScore > oppScore;
                                       return (
                                         <div key={m.id} className="flex items-center gap-2 text-xs text-slate-400">
-                                          <span className="w-20 shrink-0 text-slate-500">
+                                          <span className="w-20 shrink-0 whitespace-nowrap text-slate-500">
                                             {formatShortDate(m.schedDate)}
                                           </span>
                                           <span className={`shrink-0 px-1 py-0.5 rounded text-[0.6rem] font-semibold uppercase ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
