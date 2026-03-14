@@ -60,3 +60,25 @@ describe("weekKeyToISODate", () => {
     expect(weekKeyToISODate("")).toBeNull();
   });
 });
+
+describe("formatCaptainName", () => {
+  it("converts 'Last, First' to 'First Last'", () => {
+    expect(formatCaptainName("Smith, John")).toBe("John Smith");
+  });
+
+  it("handles multi-word first names", () => {
+    expect(formatCaptainName("O'Brien, Mary Jane")).toBe("Mary Jane O'Brien");
+  });
+
+  it("returns the name unchanged when there is no comma", () => {
+    expect(formatCaptainName("John Smith")).toBe("John Smith");
+  });
+
+  it("returns null for null input", () => {
+    expect(formatCaptainName(null)).toBeNull();
+  });
+
+  it("trims whitespace around the parts", () => {
+    expect(formatCaptainName("Smith , John ")).toBe("John Smith");
+  });
+});
