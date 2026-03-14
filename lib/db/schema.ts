@@ -238,6 +238,18 @@ export const scoringConfig = pgTable(
   (t) => [uniqueIndex("scoring_config_scope_div_key_idx").on(t.scope, t.division, t.key)]
 );
 
+// ─── Documents (external links) ───────────────────────────────────────────────
+
+export const documents = pgTable("documents", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  category: text("category").notNull().default("General"), // free-form, e.g. "Rules", "Forms"
+  description: text("description"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  publishedAt: timestamp("published_at").notNull().defaultNow(),
+});
+
 // ─── Scrape Log ───────────────────────────────────────────────────────────────
 
 export const scrapeLog = pgTable("scrape_log", {
