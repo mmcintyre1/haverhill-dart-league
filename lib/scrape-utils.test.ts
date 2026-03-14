@@ -3,7 +3,6 @@ import {
   parseCricketNotable,
   gameType,
   setWinner,
-  weekKeyToISODate,
   guidToFakeId,
 } from "./scrape-utils";
 
@@ -79,26 +78,6 @@ describe("setWinner", () => {
 
   it("returns null for empty legs array", () => {
     expect(setWinner([])).toBeNull();
-  });
-});
-
-describe("weekKeyToISODate", () => {
-  it("converts DC weekKey '27 Jan 2026' to '2026-01-27'", () => {
-    expect(weekKeyToISODate("27 Jan 2026")).toBe("2026-01-27");
-  });
-
-  it("zero-pads single-digit days", () => {
-    expect(weekKeyToISODate("3 Mar 2026")).toBe("2026-03-03");
-  });
-
-  it("handles all months", () => {
-    expect(weekKeyToISODate("1 Feb 2026")).toBe("2026-02-01");
-    expect(weekKeyToISODate("15 Dec 2025")).toBe("2025-12-15");
-  });
-
-  it("returns null for malformed input", () => {
-    expect(weekKeyToISODate("bad input")).toBeNull();
-    expect(weekKeyToISODate("")).toBeNull();
   });
 });
 

@@ -32,17 +32,6 @@ export function setWinner(legs: DCGameLeg[]): 0 | 1 | null {
   return null;
 }
 
-export function weekKeyToISODate(weekKey: string): string | null {
-  const M: Record<string, string> = {
-    Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",
-    Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12",
-  };
-  const [d, m, y] = weekKey.split(" ");
-  const mn = M[m];
-  if (!mn || !d || !y) return null;
-  return `${y}-${mn}-${d.padStart(2, "0")}`;
-}
-
 export function guidToFakeId(guid: string): number {
   let h = 0;
   for (const c of guid) {

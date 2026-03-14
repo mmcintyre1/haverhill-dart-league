@@ -1,6 +1,7 @@
 import { eq, and, inArray } from "drizzle-orm";
 import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig } from "./db";
-import { parseCricketNotable, gameType, setWinner, weekKeyToISODate, guidToFakeId } from "./scrape-utils";
+import { parseCricketNotable, gameType, setWinner, guidToFakeId } from "./scrape-utils";
+import { weekKeyToISODate } from "./format";
 import {
   fetchLeaguePageProps,
   fetchStandingsPageProps,
