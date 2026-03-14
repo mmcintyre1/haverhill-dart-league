@@ -28,6 +28,19 @@ export function weekKeyToISODate(weekKey: string): string | null {
 }
 
 /**
+ * Convert a DartConnect captain name ("Last, First") to display order ("First Last").
+ * Returns the name unchanged if there is no comma, or null for null input.
+ */
+export function formatCaptainName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const commaIdx = name.indexOf(",");
+  if (commaIdx === -1) return name.trim();
+  const last = name.slice(0, commaIdx).trim();
+  const first = name.slice(commaIdx + 1).trim();
+  return `${first} ${last}`;
+}
+
+/**
  * Format a round/date pair as "Week 6 – Feb 27, 2026".
  * Falls back gracefully when either value is missing.
  */

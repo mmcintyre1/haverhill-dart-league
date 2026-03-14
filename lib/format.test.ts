@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatShortDate, formatRoundLabel, weekKeyToISODate } from "./format";
+import { formatShortDate, formatRoundLabel, weekKeyToISODate, formatCaptainName } from "./format";
 
 describe("formatShortDate", () => {
   it("formats a YYYY-MM-DD string as 'Mon D, YYYY'", () => {
