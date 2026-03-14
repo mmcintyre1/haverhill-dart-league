@@ -8,6 +8,11 @@ import { formatShortDate } from "@/lib/format";
 
 export const revalidate = 86400;
 
+export async function generateStaticParams() {
+  const rows = await db.select({ id: players.id }).from(players);
+  return rows.map((p) => ({ id: String(p.id) }));
+}
+
 async function getSeasons() {
   return db.select().from(seasons).orderBy(desc(seasons.startDate));
 }
