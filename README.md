@@ -8,12 +8,13 @@ Custom league website that automatically pulls stats, schedules, and results fro
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js (App Router), React 19, TypeScript |
-| Database | Neon PostgreSQL (serverless) |
+| Framework | Next.js 16 (App Router), React 19, TypeScript |
+| Database | Neon PostgreSQL (serverless HTTP driver) |
 | ORM | Drizzle ORM |
 | Styling | Tailwind CSS v4 |
-| Hosting | Netlify |
+| Hosting | Netlify Pro |
 | Scheduled jobs | Netlify scheduled functions |
+| Testing | Vitest + @vitest/coverage-v8 |
 
 ---
 
@@ -44,6 +45,10 @@ LEAGUE_NAME=Haverhill Dart League
 
 # Optional: enables HTTP Basic Auth on /admin
 ADMIN_PASSWORD=your-password-here
+
+# Set to /.netlify/functions/scrape-background on Netlify
+# Leave unset or set to /api/scrape for local dev
+NEXT_PUBLIC_SCRAPE_BG_URL=/.netlify/functions/scrape-background
 ```
 
 Netlify sets `URL` and `DEPLOY_URL` automatically.
@@ -80,9 +85,10 @@ curl -X POST http://localhost:3000/api/scrape \
 3. Build settings are already in `netlify.toml` (`npm run build`, publish `.next`)
 4. Add environment variables in **Netlify → Site settings → Environment variables**:
    - `DATABASE_URL`, `SCRAPE_SECRET`, `DC_LEAGUE_ID`, `DC_LEAGUE_SLUG`, `LEAGUE_NAME`
+   - `NEXT_PUBLIC_SCRAPE_BG_URL` → `/.netlify/functions/scrape-background`
 5. Deploy
 
-The scheduled function (`netlify/functions/scheduled-scrape.mts`) runs every **Wednesday at 6:00 AM ET** — the morning after Tuesday night play.
+The scheduled function (`netlify/functions/scheduled-scrape.mts`) runs every **Wednesday at 6:00 AM ET** — the morning after Tuesday night play. After a successful scrape the site cache is automatically busted via `/api/revalidate`.
 
 After deploying, apply any schema changes with:
 
@@ -100,10 +106,30 @@ npm run db:push
 | `/standings` | Team standings by division with expandable per-match history |
 | `/matches` | Full schedule — upcoming rounds and completed results with scores |
 | `/leaderboard` | Player stats table — PPR, MPR, records, 100+, 180s, etc. |
-| `/players/[id]` | Individual player profile — season summary and week-by-week breakdown |
-| `/teams` | Team rosters, captains, and venue info grouped by division |
+| `/players/[id]` | Individual player profile — season summary, week-by-week breakdown, and DC recap links |
+| `/teams` | Team rosters, captains, venue info, and collapsible past/upcoming schedule per team |
 | `/about` | League rules, scoring explanation, and stat glossary |
 | `/admin` | Admin panel — news posts, data refresh, site content, scoring config |
+
+All public pages use ISR with a 1-hour TTL (`revalidate = 3600`), busted automatically post-scrape.
+
+---
+
+## Testing
+
+```bash
+npm test              # Run all tests once
+npm run test:watch    # Watch mode
+npm run test:coverage # Run with coverage report (output in coverage/)
+```
+
+Coverage is configured in `vitest.config.ts` and targets the pure utility layer in `lib/`. DB-dependent and external-API code is excluded. Thresholds: 80% statements/functions/lines, 75% branches.
+
+| File | What's tested |
+|---|---|
+| `lib/format.ts` | `formatShortDate`, `formatRoundLabel` |
+| `lib/schedule.ts` | `groupTeamSchedule` — splits and sorts past/upcoming matches |
+| `lib/scrape-utils.ts` | `parseCricketNotable`, `gameType`, `setWinner`, `weekKeyToISODate`, `guidToFakeId` |
 
 ---
 
@@ -114,7 +140,7 @@ npm run db:push
 | `seasons` | One row per season with `isActive` flag and `lastScrapedAt` timestamp |
 | `divisions` | Divisions (A, B, C, D) per season, keyed to DartConnect IDs |
 | `teams` | Teams per season — captain, venue name/address/phone, DC standings (wins/losses/points) |
-| `players` | Master player list — name and optional DartConnect GUID |
+| `players` | Master player list — name and DartConnect GUID (unique key) |
 | `playerStats` | Aggregated per-player per-season stats (records, averages, 100+, MPR, PPR, etc.), split by phase (REG/POST) |
 | `playerWeekStats` | Week-by-week breakdown per player — set wins/losses by game type, HH, LDG, marks, opponent team |
 | `playerSeasonTeams` | Authoritative team/division membership per player per season |
@@ -188,13 +214,15 @@ Rules are configurable from `/admin` → Scoring Config and stored in the `scori
 | `cricket.win_pts` | 1 | Points per Cricket set win |
 | `601.win_pts` | 1 | Points per 601 set win |
 | `501.win_pts` | 1 | Points per 501 set win |
-| `01_hh.threshold` | 475/450/425/400 (A/B/C/D) | 100+ score threshold for hot hand 🔥 |
+| `01_hh.threshold` | 475/450/425/400 (A/B/C/D) | 100+ score total threshold for hot hand 🔥 |
 | `ro_hh.threshold` | 20/17/14/12 (A/B/C/D) | Cricket marks threshold for hot hand 🔥 |
-| `g3.include_180` | true | Count 180s in game-3 tiebreakers |
-| `g3.include_ro9` | true | Count RO9 marks in game-3 |
-| `g3.include_hout` | true | Count high outs in game-3 |
-| `g3.include_100plus` | false | Count 100+ scores in game-3 |
-| `g3.include_rnds` | false | Count cricket rounds in game-3 |
+| `g3.include_180` | true | Count 180s in their trophy column during game-3 tiebreakers |
+| `g3.include_ro9` | true | Count RO9 in its trophy column during game-3 |
+| `g3.include_hout` | true | Count high outs in their trophy column during game-3 |
+| `g3.include_ro6b` | true | Count 6-bull rounds in the 6B trophy column during game-3 |
+| `g3.include_100plus` | false | Count 100+ scores toward the aggregate total in game-3 |
+| `g3.include_rnds` | false | Count 6+ mark cricket rounds toward the RNDS aggregate in game-3 |
+| `g3.include_bulls` | false | Count 4B+ bull rounds toward the RNDS aggregate in game-3 |
 
 ---
 
@@ -207,12 +235,13 @@ app/
   matches/page.tsx            Schedule and results
   leaderboard/page.tsx        Player leaderboard
   players/[id]/page.tsx       Player profile
-  teams/page.tsx              Team rosters and venues
+  teams/page.tsx              Team rosters, venues, and per-team schedule
   about/page.tsx              Rules and glossary
   admin/page.tsx              Admin panel
   api/
     scrape/route.ts           Scrape trigger endpoint
     scrape/status/route.ts    Scrape status polling
+    revalidate/route.ts       On-demand ISR cache bust (called post-scrape)
     admin/                    News, content, scoring config APIs
 
 lib/
@@ -220,8 +249,10 @@ lib/
     schema.ts                 Drizzle schema (all tables)
     index.ts                  DB client and table exports
   scrape-runner.ts            Core scraping and stat calculation logic
+  scrape-utils.ts             Pure helpers extracted from scraper (tested)
   dartconnect.ts              DartConnect fetch helpers and venue parser
-  format.ts                   Shared date formatting utilities
+  schedule.ts                 groupTeamSchedule — splits matches into past/upcoming (tested)
+  format.ts                   Shared date formatting utilities (tested)
 
 components/
   VenueToggle.tsx             Expandable venue info with map pin icon
@@ -232,8 +263,4 @@ components/
 netlify/functions/
   scheduled-scrape.mts        Wednesday 6 AM ET cron trigger
   scrape-background.ts        Long-running background scrape handler
-
-public/
-  sw.js                       Service worker (cache-first static, network-first nav)
-  manifest.json               PWA manifest
 ```
