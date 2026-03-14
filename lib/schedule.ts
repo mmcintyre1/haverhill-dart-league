@@ -42,7 +42,7 @@ export function groupTeamSchedule(
     }
   }
 
-  past.sort((a, b) => (b.schedDate ?? "").localeCompare(a.schedDate ?? ""));
+  past.sort((a, b) => b.schedDate!.localeCompare(a.schedDate!));
   upcoming.sort((a, b) => (a.schedDate ?? "").localeCompare(b.schedDate ?? ""));
 
   return { past, upcoming };

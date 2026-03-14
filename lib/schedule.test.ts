@@ -53,4 +53,21 @@ describe("groupTeamSchedule", () => {
     expect(result.past).toHaveLength(0);
     expect(result.upcoming).toHaveLength(0);
   });
+
+  it("sorts multiple null-date upcoming matches stably", () => {
+    const m1 = { ...base, id: 1, schedDate: null, status: "P" };
+    const m2 = { ...base, id: 2, schedDate: null, status: "P" };
+    const result = groupTeamSchedule([m1, m2], "2026-03-14");
+    expect(result.upcoming).toHaveLength(2);
+    expect(result.past).toHaveLength(0);
+  });
+
+  it("sorts multiple null-date past matches stably", () => {
+    const m1 = { ...base, id: 1, schedDate: null, status: "C", homeScore: 6, awayScore: 2 };
+    const m2 = { ...base, id: 2, schedDate: null, status: "C", homeScore: 4, awayScore: 4 };
+    // null dates are treated as upcoming, so past stays empty
+    const result = groupTeamSchedule([m1, m2], "2026-03-14");
+    expect(result.upcoming).toHaveLength(2);
+    expect(result.past).toHaveLength(0);
+  });
 });
