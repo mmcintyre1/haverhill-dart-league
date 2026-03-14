@@ -5,7 +5,7 @@ import { eq, asc, desc } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import SeasonSelector from "@/components/SeasonSelector";
 import { groupTeamSchedule, type ScheduleMatch } from "@/lib/schedule";
-import { formatShortDate } from "@/lib/format";
+import { formatShortDate, formatCaptainName } from "@/lib/format";
 
 export const revalidate = 86400;
 
@@ -199,7 +199,7 @@ export default async function TeamsPage({
                         <div className="flex-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 min-w-0">
                           <span className="font-semibold text-white text-sm">{team.teamName}</span>
                           {team.captain && (
-                            <span className="text-xs text-slate-500">Capt. {team.captain}</span>
+                            <span className="text-xs text-slate-500">Capt. {formatCaptainName(team.captain)}</span>
                           )}
                           {team.venueName && (
                             <span className="hidden sm:flex items-center gap-1 text-xs text-amber-400">
