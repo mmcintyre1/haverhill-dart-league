@@ -9,7 +9,7 @@ type Season = {
   lastScrapedAt: Date | null;
 };
 
-type TabId = "posts" | "refresh" | "content" | "scoring" | "documents";
+type TabId = "posts" | "refresh" | "scoring" | "documents";
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -17,7 +17,6 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
   const tabs: { id: TabId; label: string }[] = [
     { id: "posts", label: "News Posts" },
     { id: "refresh", label: "Data Refresh" },
-    { id: "content", label: "Site Content" },
     { id: "scoring", label: "Scoring" },
     { id: "documents", label: "Documents" },
   ];
@@ -298,125 +297,6 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
 
       {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
     </form>
-  );
-}
-
-// ── Content tab ───────────────────────────────────────────────────────────────
-
-const DEFAULT_GLOSSARY = JSON.stringify([
-  { abbr: "CRKT",   name: "Cricket Record",         desc: "Win-loss record in Cricket games (e.g. 11-3)." },
-  { abbr: "601",    name: "601 Record",              desc: "Win-loss record in 601 games." },
-  { abbr: "501",    name: "501 Record",              desc: "Win-loss record in 501 games." },
-  { abbr: "SOS",    name: "Strength of Schedule",    desc: "Average winning percentage of opponents faced." },
-  { abbr: "100+",   name: "100+ Scores",             desc: "Cumulative count of 3-dart turns scoring 100 or more in 01 games (legs 1 and 2 only), tallied across the season." },
-  { abbr: "180",    name: "180s",                    desc: "Perfect 3-dart scores of 180." },
-  { abbr: "H Out",  name: "High Out",                desc: "Highest checkout (finish) scored, must be over 100. All 3 game types count." },
-  { abbr: "3DA",    name: "3-Dart Average",          desc: "Average score per 3-dart turn across all 01 games." },
-  { abbr: "01 HH",  name: "01 Hot Hand",             desc: "Highest total hot hand score in 01 games." },
-  { abbr: "LDG",    name: "Low Dart Game",            desc: "Fewest darts used to win a 501 leg, tracked as the best (lowest) across the season." },
-  { abbr: "RNDS",   name: "Cricket Marks",           desc: "Total cricket marks for turns at or above 6 marks, legs 1 and 2 only." },
-  { abbr: "RO9",    name: "9-Mark Turns",            desc: "Cricket turns with three triples (9 marks)." },
-  { abbr: "MPR",    name: "Marks Per Round",         desc: "Average cricket marks scored per round across all cricket games." },
-  { abbr: "RO HH",  name: "Rounds Hot Hand",         desc: "Highest hot hand rounds in cricket." },
-  { abbr: "RO6B",   name: "RO6B",                   desc: "Rounds of 6 bull's eyes hit." },
-  { abbr: "AVG",    name: "Set Win %",               desc: "Percentage of individual sets (games) won." },
-  { abbr: "PTS",    name: "Points",                  desc: "Total set wins accumulated across all match weeks." },
-], null, 2);
-
-function ContentTab({ secret }: { secret: string }) {
-  const [scoring, setScoring] = useState("");
-  const [glossary, setGlossary] = useState(DEFAULT_GLOSSARY);
-  const [fetching, setFetching] = useState(true);
-  const [scoringLoading, setScoringLoading] = useState(false);
-  const [glossaryLoading, setGlossaryLoading] = useState(false);
-  const [scoringResult, setScoringResult] = useState<Result | null>(null);
-  const [glossaryResult, setGlossaryResult] = useState<Result | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      const headers: Record<string, string> = {};
-      if (secret) headers["Authorization"] = `Bearer ${secret}`;
-      const res = await fetch("/api/admin/content", { headers });
-      if (res.ok) {
-        const data = await res.json();
-        if (data["about.scoring"]) setScoring(data["about.scoring"]);
-        if (data["about.glossary"]) setGlossary(data["about.glossary"]);
-      }
-      setFetching(false);
-    }
-    load();
-  }, [secret]);
-
-  async function save(key: string, value: string, setLoading: (v: boolean) => void, setResult: (r: Result | null) => void) {
-    setLoading(true);
-    setResult(null);
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (secret) headers["Authorization"] = `Bearer ${secret}`;
-      const res = await fetch("/api/admin/content", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ key, value }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Unknown error");
-      setResult({ ok: true, message: "Saved successfully." });
-    } catch (e) {
-      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (fetching) {
-    return <div className="text-slate-500 text-sm py-4">Loading content…</div>;
-  }
-
-  return (
-    <div className="space-y-8">
-      {/* Scoring explanation */}
-      <div>
-        <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Scoring Explanation</label>
-        <p className="text-xs text-slate-500 mb-2">Plain text shown on the About page under "How Scoring Works".</p>
-        <textarea
-          rows={6}
-          value={scoring}
-          onChange={(e) => setScoring(e.target.value)}
-          className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500 resize-y"
-          placeholder="Explain how team points, set wins, and match scoring work…"
-        />
-        <button
-          onClick={() => save("about.scoring", scoring, setScoringLoading, setScoringResult)}
-          disabled={scoringLoading}
-          className="mt-2 px-4 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-        >
-          {scoringLoading ? "Saving…" : "Save"}
-        </button>
-        {scoringResult && <ResultBanner result={scoringResult} onDismiss={() => setScoringResult(null)} />}
-      </div>
-
-      {/* Glossary JSON */}
-      <div>
-        <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Stat Glossary</label>
-        <p className="text-xs text-slate-500 mb-2">
-          JSON array of <code className="text-amber-400/80">{`[{abbr, name, desc}]`}</code>. Edit descriptions or add/remove rows.
-        </p>
-        <textarea
-          rows={22}
-          value={glossary}
-          onChange={(e) => setGlossary(e.target.value)}
-          className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 resize-y font-mono"
-        />
-        <button
-          onClick={() => save("about.glossary", glossary, setGlossaryLoading, setGlossaryResult)}
-          disabled={glossaryLoading}
-          className="mt-2 px-4 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-        >
-          {glossaryLoading ? "Saving…" : "Save"}
-        </button>
-        {glossaryResult && <ResultBanner result={glossaryResult} onDismiss={() => setGlossaryResult(null)} />}
-      </div>
-    </div>
   );
 }
 
@@ -947,8 +827,7 @@ export default function AdminPanel({ seasons, secret }: { seasons: Season[]; sec
       {tab === "posts"    ? <PostsTab secret={secret} /> :
        tab === "refresh"  ? <RefreshTab seasons={seasons} secret={secret} /> :
        tab === "scoring"   ? <ScoringTab seasons={seasons} secret={secret} /> :
-       tab === "documents" ? <DocumentsTab secret={secret} /> :
-                             <ContentTab secret={secret} />}
+                             <DocumentsTab secret={secret} />}
     </div>
   );
 }
