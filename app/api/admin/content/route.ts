@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { db, siteContent } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -40,5 +41,6 @@ export async function POST(req: NextRequest) {
       target: siteContent.key,
       set: { value, updatedAt: new Date() },
     });
+  revalidatePath("/", "layout");
   return NextResponse.json({ ok: true });
 }

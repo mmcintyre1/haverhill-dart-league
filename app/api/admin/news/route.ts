@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { db, newsPosts } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -27,5 +28,6 @@ export async function POST(req: NextRequest) {
     .values({ title, body: postBody, author: author ?? null })
     .returning({ id: newsPosts.id, publishedAt: newsPosts.publishedAt });
 
+  revalidatePath("/", "layout");
   return NextResponse.json({ ok: true, id: post.id, publishedAt: post.publishedAt });
 }

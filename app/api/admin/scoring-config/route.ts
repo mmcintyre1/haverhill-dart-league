@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { db, scoringConfig } from "@/lib/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
@@ -61,5 +62,6 @@ export async function POST(req: NextRequest) {
     .insert(scoringConfig)
     .values({ scope, division, key, value, updatedAt: new Date() });
 
+  revalidatePath("/", "layout");
   return NextResponse.json({ ok: true });
 }
