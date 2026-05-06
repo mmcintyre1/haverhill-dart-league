@@ -212,10 +212,10 @@ export default async function StandingsPage({
                 <div className="w-4 mr-2" />
                 <div className="w-6">#</div>
                 <div className="flex-1">Team</div>
-                <div className="w-12 text-center">W</div>
-                <div className="w-12 text-center">L</div>
-                <div className="w-16 text-center">Pct</div>
-                <div className="w-16 text-center text-amber-600">Pts</div>
+                <div className="w-8 sm:w-12 text-center">W</div>
+                <div className="w-8 sm:w-12 text-center">L</div>
+                <div className="w-12 sm:w-16 text-center">Pct</div>
+                <div className="w-12 sm:w-16 text-center text-amber-600">Pts</div>
               </div>
 
               {/* Team rows */}
@@ -235,18 +235,18 @@ export default async function StandingsPage({
                         ▸
                       </span>
                       <span className="w-6 text-xs text-slate-600 tabular-nums">{i + 1}</span>
-                      <span className={`flex-1 text-sm font-medium ${isTop ? "text-amber-400" : "text-slate-200"}`}>
+                      <span className={`flex-1 min-w-0 truncate text-sm font-medium ${isTop ? "text-amber-400" : "text-slate-200"}`}>
                         {row.name}
-                        {isTop && (
-                          <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-amber-600 font-semibold">
-                            LEAD
-                          </span>
-                        )}
                       </span>
-                      <span className="w-12 text-center text-sm text-slate-200 tabular-nums font-semibold">{row.wins}</span>
-                      <span className="w-12 text-center text-sm text-slate-400 tabular-nums">{row.losses}</span>
-                      <span className="w-16 text-center text-sm text-slate-400 tabular-nums">{pct}</span>
-                      <span className="w-16 text-center text-sm text-amber-400 tabular-nums font-semibold">{row.pts}</span>
+                      {isTop && (
+                        <span className="shrink-0 ml-1 text-[0.6rem] uppercase tracking-wider text-amber-600 font-semibold">
+                          LEAD
+                        </span>
+                      )}
+                      <span className="w-8 sm:w-12 text-center text-sm text-slate-200 tabular-nums font-semibold">{row.wins}</span>
+                      <span className="w-8 sm:w-12 text-center text-sm text-slate-400 tabular-nums">{row.losses}</span>
+                      <span className="w-12 sm:w-16 text-center text-sm text-slate-400 tabular-nums">{pct}</span>
+                      <span className="w-12 sm:w-16 text-center text-sm text-amber-400 tabular-nums font-semibold">{row.pts}</span>
                     </summary>
 
                     {/* Expanded match rows */}
