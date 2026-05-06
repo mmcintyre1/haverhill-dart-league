@@ -249,11 +249,10 @@ export default async function MatchesPage({
                   </div>
                   <table className="w-full table-fixed text-sm border-collapse">
                     <colgroup>
-                      <col className="w-12" />
-                      <col className="w-[38%]" />
-                      <col className="w-24" />
-                      <col className="w-[38%]" />
                       <col className="w-8" />
+                      <col />
+                      <col className="w-20" />
+                      <col />
                     </colgroup>
                     <tbody>
                       {ms.map((m) => {
@@ -267,48 +266,48 @@ export default async function MatchesPage({
                             key={m.id}
                             className="border-t border-slate-700/50 bg-slate-900 hover:bg-slate-800/60 transition-colors"
                           >
-                            <td className="px-3 py-2.5 text-xs text-slate-500 truncate">
+                            <td className="pl-3 py-2.5 text-xs text-slate-500">
                               {m.divisionName ?? ""}
                             </td>
                             <td
-                              className={`px-3 py-2.5 text-right truncate ${
+                              className={`px-2 py-2.5 text-right truncate ${
                                 hw ? "text-white font-semibold" : "text-slate-400"
                               }`}
                             >
                               {m.homeTeamName}
                             </td>
                             <td className="py-2.5 text-center">
-                              {scored ? (
-                                <span className="font-bold tabular-nums text-slate-200">
-                                  {hs} – {as_}
-                                </span>
-                              ) : (
-                                <span className="text-slate-600 text-xs">—</span>
-                              )}
+                              <div className="flex items-center justify-center gap-1.5">
+                                {scored ? (
+                                  <span className="font-bold tabular-nums text-slate-200">
+                                    {hs} – {as_}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 text-xs">—</span>
+                                )}
+                                {m.dcGuid && (
+                                  <a
+                                    href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="View on DartConnect"
+                                    className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0"
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <circle cx="12" cy="12" r="10"/>
+                                      <circle cx="12" cy="12" r="5"/>
+                                      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                    </svg>
+                                  </a>
+                                )}
+                              </div>
                             </td>
                             <td
-                              className={`px-3 py-2.5 truncate ${
+                              className={`px-2 pr-3 py-2.5 truncate ${
                                 aw ? "text-white font-semibold" : "text-slate-400"
                               }`}
                             >
                               {m.awayTeamName}
-                            </td>
-                            <td className="pr-2 py-2.5 text-right">
-                              {m.dcGuid && (
-                                <a
-                                  href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  aria-label="View on DartConnect"
-                                  className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center"
-                                >
-                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <circle cx="12" cy="12" r="5"/>
-                                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                                  </svg>
-                                </a>
-                              )}
                             </td>
                           </tr>
                         );

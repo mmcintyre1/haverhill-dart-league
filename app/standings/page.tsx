@@ -209,7 +209,7 @@ export default async function StandingsPage({
 
               {/* Column headers */}
               <div className="flex items-center px-4 py-2 bg-slate-900 border-b border-slate-700/60 text-[0.65rem] uppercase tracking-wider text-slate-500 font-medium">
-                <div className="w-6 mr-2" />
+                <div className="w-4 mr-2" />
                 <div className="w-6">#</div>
                 <div className="flex-1">Team</div>
                 <div className="w-12 text-center">W</div>
