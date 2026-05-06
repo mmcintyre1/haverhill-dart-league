@@ -1,5 +1,6 @@
 import Link from "next/link";
 import VenueToggle from "@/components/VenueToggle";
+import NewsCarousel from "@/components/NewsCarousel";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -80,13 +81,6 @@ async function getLastRound(seasonId: number) {
   };
 }
 
-function formatDate(d: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  }).format(d);
-}
 
 export default async function HomePage() {
   const [season, news] = await Promise.all([getActiveSeason(), getNews()]);
@@ -153,33 +147,7 @@ export default async function HomePage() {
             <div className="flex-1 h-px bg-slate-800" />
           </div>
 
-          {news.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-700 py-14 text-center text-slate-500 flex-1 flex flex-col items-center justify-center">
-              <p className="text-3xl mb-3 select-none">◎</p>
-              <p className="font-medium text-slate-400">Stay tuned for announcements</p>
-              <p className="text-sm mt-1">League news and updates will appear here throughout the season.</p>
-            </div>
-          ) : (
-            <div className="space-y-4 overflow-y-auto max-h-[420px] pr-1">
-              {news.map((post) => (
-                <article
-                  key={post.id}
-                  className="rounded-xl border border-slate-800 bg-slate-900 p-5 hover:border-slate-700 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-4 mb-2">
-                    <h3 className="text-base font-semibold text-white leading-snug">{post.title}</h3>
-                    <time className="text-xs text-slate-500 shrink-0 mt-0.5">
-                      {formatDate(post.publishedAt)}
-                    </time>
-                  </div>
-                  <p className="text-slate-400 text-sm leading-relaxed whitespace-pre-wrap">{post.body}</p>
-                  {post.author && (
-                    <p className="mt-3 text-xs text-slate-600">— {post.author}</p>
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
+          <NewsCarousel posts={news} />
         </div>
       </div>
 
