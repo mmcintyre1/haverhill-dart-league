@@ -213,6 +213,7 @@ export const newsPosts = pgTable("news_posts", {
   body: text("body").notNull(),
   author: text("author"),
   publishedAt: timestamp("published_at").notNull().defaultNow(),
+  hidden: boolean("hidden").notNull().default(false),
 });
 
 // ─── Site Content (admin-editable key/value store) ────────────────────────────

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { filterLeaderboardByName } from "@/lib/leaderboard-filter";
 
 export interface LeaderboardRow {
   id: number;
@@ -261,10 +262,12 @@ export default function LeaderboardTable({
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("pts");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const [query, setQuery] = useState("");
 
   const sp = scoringPts ?? { cricket: 1, "601": 1, "501": 1 };
+  const filteredRows = filterLeaderboardByName(rows, query);
 
-  const sorted = [...rows].sort((a, b) => {
+  const sorted = [...filteredRows].sort((a, b) => {
     if (sortKey === "playerName" || sortKey === "teamName") {
       return (String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""))) * sortDir * -1;
     }
@@ -364,6 +367,21 @@ export default function LeaderboardTable({
 
   return (
     <>
+      {/* ── Search bar ───────────────────────────────────────────────────── */}
+      <div className="mb-3">
+        <datalist id="leaderboard-players">
+          {rows.map((r) => <option key={r.id} value={r.playerName} />)}
+        </datalist>
+        <input
+          type="search"
+          list="leaderboard-players"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search players…"
+          className="w-full sm:w-64 rounded bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30"
+        />
+      </div>
+
       {/* ── Mobile: sort dropdown + player cards ─────────────────────────── */}
       <div className="sm:hidden space-y-2">
         <div className="flex items-center gap-2 mb-3">

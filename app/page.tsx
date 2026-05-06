@@ -1,11 +1,11 @@
 import Link from "next/link";
 import VenueToggle from "@/components/VenueToggle";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
-import { eq, desc, asc, and, or, gt, isNotNull } from "drizzle-orm";
+import { eq, desc, asc, and, or, gt, isNotNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { formatShortDate } from "@/lib/format";
 
-export const revalidate = 86400;
+export const revalidate = 300;
 
 async function getActiveSeason() {
   const [s] = await db
@@ -20,6 +20,7 @@ async function getNews() {
   return db
     .select()
     .from(newsPosts)
+    .where(ne(newsPosts.hidden, true))
     .orderBy(desc(newsPosts.publishedAt))
     .limit(10);
 }

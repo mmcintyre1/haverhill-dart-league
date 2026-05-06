@@ -23,13 +23,16 @@ export const handler = async (event: Event) => {
   try {
     await runScrape(payload, triggeredBy);
 
-    // Bust Next.js ISR cache so pages show fresh data immediately
+    // Bust Next.js ISR cache so pages show fresh data immediately.
+    // Awaited here — background function can run 15 min so there's no reason to fire-and-forget.
     const siteUrl = (process.env.URL ?? "").replace(/\/$/, "");
     if (siteUrl) {
-      fetch(`${siteUrl}/api/revalidate`, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${process.env.SCRAPE_SECRET ?? ""}` },
-      }).catch(() => {}); // fire-and-forget, non-blocking
+      try {
+        await fetch(`${siteUrl}/api/revalidate`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${process.env.SCRAPE_SECRET ?? ""}` },
+        });
+      } catch { /* non-fatal: scrape succeeded even if cache bust fails */ }
     }
 
     return { statusCode: 200, body: "ok" };
