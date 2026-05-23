@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { db, seasons, teams, matches, playerStats } from "@/lib/db";
+import { db, seasons, teams, matches, playerStats, playerWeekStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
 import { eq, and, or, gt, desc, asc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
@@ -24,14 +24,17 @@ async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
 type MatchRow = {
   roundSeq: number | null;
   schedDate: string | null;
+  prettyDate: string | null;
   opponent: string;
   teamScore: number;
   opponentScore: number;
   dcGuid: string | null;
+  weekMpr: number | null;
+  weekPpr: number | null;
 };
 
 async function getStandings(seasonId: number, divisionFilter: string | null) {
-  const [allTeams, allMatches, allDivisions, allPlayerStats] = await Promise.all([
+  const [allTeams, allMatches, allDivisions, allPlayerStats, allWeekStats] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
       .select()
@@ -45,9 +48,13 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       .orderBy(asc(matches.schedDate)),
     db.select().from(divisions).where(eq(divisions.seasonId, seasonId)),
     db
-      .select({ teamId: playerStats.teamId, mpr: playerStats.mpr, ppr: playerStats.ppr, crkt: playerStats.crkt, col601: playerStats.col601, col501: playerStats.col501 })
+      .select({ playerId: playerStats.playerId, teamId: playerStats.teamId, mpr: playerStats.mpr, ppr: playerStats.ppr, crkt: playerStats.crkt, col601: playerStats.col601, col501: playerStats.col501 })
       .from(playerStats)
       .where(and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "REG"))),
+    db
+      .select({ playerId: playerWeekStats.playerId, weekKey: playerWeekStats.weekKey, mpr: playerWeekStats.mpr, ppr: playerWeekStats.ppr, crktWins: playerWeekStats.crktWins, crktLosses: playerWeekStats.crktLosses, col601Wins: playerWeekStats.col601Wins, col601Losses: playerWeekStats.col601Losses, col501Wins: playerWeekStats.col501Wins, col501Losses: playerWeekStats.col501Losses })
+      .from(playerWeekStats)
+      .where(and(eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, "REG"))),
   ]);
 
   const parseRecord = (r: string | null) => {
@@ -68,6 +75,25 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     if (!isNaN(mpr) && mpr > 0 && crktGames > 0) { e.mprWsum += mpr * crktGames; e.mprWtotal += crktGames; }
     if (!isNaN(ppr) && ppr > 0 && zeroOneGames > 0) { e.pprWsum += ppr * zeroOneGames; e.pprWtotal += zeroOneGames; }
     teamMprPpr.set(ps.teamId, e);
+  }
+
+  // Per-week team averages keyed by (teamId → weekKey)
+  const playerTeamMap = new Map(allPlayerStats.filter(ps => ps.teamId).map(ps => [ps.playerId, ps.teamId!]));
+  type WeekAccum = { mprWsum: number; mprWtotal: number; pprWsum: number; pprWtotal: number };
+  const teamWeekMap = new Map<number, Map<string, WeekAccum>>();
+  for (const ws of allWeekStats) {
+    const teamId = playerTeamMap.get(ws.playerId);
+    if (!teamId) continue;
+    if (!teamWeekMap.has(teamId)) teamWeekMap.set(teamId, new Map());
+    const weekMap = teamWeekMap.get(teamId)!;
+    if (!weekMap.has(ws.weekKey)) weekMap.set(ws.weekKey, { mprWsum: 0, mprWtotal: 0, pprWsum: 0, pprWtotal: 0 });
+    const e = weekMap.get(ws.weekKey)!;
+    const mpr = ws.mpr ? parseFloat(String(ws.mpr)) : NaN;
+    const ppr = ws.ppr ? parseFloat(String(ws.ppr)) : NaN;
+    const crktGames = ws.crktWins + ws.crktLosses;
+    const zeroOneGames = ws.col601Wins + ws.col601Losses + ws.col501Wins + ws.col501Losses;
+    if (!isNaN(mpr) && mpr > 0 && crktGames > 0) { e.mprWsum += mpr * crktGames; e.mprWtotal += crktGames; }
+    if (!isNaN(ppr) && ppr > 0 && zeroOneGames > 0) { e.pprWsum += ppr * zeroOneGames; e.pprWtotal += zeroOneGames; }
   }
 
   const divNameById = new Map(allDivisions.map((d) => [d.id, d.name]));
@@ -111,27 +137,40 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
     if (home) home.divisionName = home.divisionName ?? m.divisionName;
     if (away) away.divisionName = away.divisionName ?? m.divisionName;
 
-    if (home) {
+    const weekKey = m.prettyDate ?? "";
+    const getWeekStats = (teamId: number) => {
+      const e = weekKey ? teamWeekMap.get(teamId)?.get(weekKey) : undefined;
+      return {
+        weekMpr: e && e.mprWtotal > 0 ? e.mprWsum / e.mprWtotal : null,
+        weekPpr: e && e.pprWtotal > 0 ? e.pprWsum / e.pprWtotal : null,
+      };
+    };
+
+    if (home && m.homeTeamId) {
       home.matchRows.push({
         roundSeq: m.roundSeq ?? null,
         schedDate: m.schedDate ?? null,
+        prettyDate: m.prettyDate ?? null,
         opponent: m.awayTeamName ?? "Unknown",
         teamScore: hs,
         opponentScore: as_,
         dcGuid: m.dcGuid ?? null,
+        ...getWeekStats(m.homeTeamId),
       });
       home.pts += hs;
       if (hs > as_) home.wins++;
       else home.losses++;
     }
-    if (away) {
+    if (away && m.awayTeamId) {
       away.matchRows.push({
         roundSeq: m.roundSeq ?? null,
         schedDate: m.schedDate ?? null,
+        prettyDate: m.prettyDate ?? null,
         opponent: m.homeTeamName ?? "Unknown",
         teamScore: as_,
         opponentScore: hs,
         dcGuid: m.dcGuid ?? null,
+        ...getWeekStats(m.awayTeamId),
       });
       away.pts += as_;
       if (as_ > hs) away.wins++;
@@ -281,6 +320,8 @@ export default async function StandingsPage({
                         <div className="flex items-center pl-12 pr-4 py-1.5 text-[0.6rem] uppercase tracking-wider text-slate-600 border-b border-slate-800/40 gap-3">
                           <div className="w-24 sm:w-44 shrink-0">Date</div>
                           <div className="flex-1">Opponent</div>
+                          <div className="hidden sm:block w-14 text-center text-emerald-700">MPR</div>
+                          <div className="hidden sm:block w-16 text-center text-sky-700">3DA</div>
                           <div className="shrink-0">Result</div>
                         </div>
                         {row.matchRows.map((m, mi) => {
@@ -294,6 +335,8 @@ export default async function StandingsPage({
                                 {formatShortDate(m.schedDate) || "—"}
                               </span>
                               <span className="flex-1 text-xs text-slate-300 truncate">{m.opponent}</span>
+                              <span className="hidden sm:block w-14 text-center text-xs text-emerald-400 tabular-nums">{m.weekMpr != null ? m.weekMpr.toFixed(2) : "—"}</span>
+                              <span className="hidden sm:block w-16 text-center text-xs text-sky-400 tabular-nums">{m.weekPpr != null ? m.weekPpr.toFixed(2) : "—"}</span>
                               <div className="flex items-center gap-2 shrink-0">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[0.65rem] font-semibold tabular-nums ${
                                   won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
