@@ -12,8 +12,9 @@ Custom league website that automatically pulls stats, schedules, and results fro
 | Database | Neon PostgreSQL (serverless HTTP driver) |
 | ORM | Drizzle ORM |
 | Styling | Tailwind CSS v4 |
-| Hosting | Netlify Pro |
+| Hosting | Netlify Free |
 | Scheduled jobs | Netlify scheduled functions |
+| Email | Resend |
 | Testing | Vitest + @vitest/coverage-v8 |
 
 ---
@@ -49,6 +50,11 @@ ADMIN_PASSWORD=your-password-here
 # Set to /.netlify/functions/scrape-background on Netlify
 # Leave unset or set to /api/scrape for local dev
 NEXT_PUBLIC_SCRAPE_BG_URL=/.netlify/functions/scrape-background
+
+# Resend (contact form email delivery)
+RESEND_API_KEY=re_...            # From resend.com dashboard
+CONTACT_EMAIL=you@example.com   # Fallback delivery address (overridden by admin Site Config)
+RESEND_FROM_EMAIL=noreply@yourdomain.com  # Must be on a Resend-verified sender domain
 ```
 
 Netlify sets `URL` and `DEPLOY_URL` automatically.
@@ -86,9 +92,12 @@ curl -X POST http://localhost:3000/api/scrape \
 4. Add environment variables in **Netlify → Site settings → Environment variables**:
    - `DATABASE_URL`, `SCRAPE_SECRET`, `DC_LEAGUE_ID`, `DC_LEAGUE_SLUG`, `LEAGUE_NAME`
    - `NEXT_PUBLIC_SCRAPE_BG_URL` → `/.netlify/functions/scrape-background`
+   - `RESEND_API_KEY`, `CONTACT_EMAIL`, `RESEND_FROM_EMAIL`
 5. Deploy
 
-The scheduled function (`netlify/functions/scheduled-scrape.mts`) runs every **Wednesday at 6:00 AM ET** — the morning after Tuesday night play. After a successful scrape the site cache is automatically busted via `/api/revalidate`.
+The scheduled function (`netlify/functions/scheduled-scrape.mts`) runs every **Wednesday and Thursday at 5:00 AM ET** — to catch Tuesday night results plus any delayed updates. After a successful scrape the site cache is automatically busted via `/api/revalidate`.
+
+> **Resend setup:** Before the contact form can send email, you must verify a sender domain (or use the Resend sandbox `onboarding@resend.dev` for testing). Set `RESEND_FROM_EMAIL` to an address on your verified domain. `CONTACT_EMAIL` is where submissions are delivered.
 
 After deploying, apply any schema changes with:
 
@@ -102,16 +111,16 @@ npm run db:push
 
 | Route | Description |
 |---|---|
-| `/` | Home — hero, news/announcements, next upcoming round, last week's results |
+| `/` | Home — hero, news/announcements (carousel), next upcoming round, last week's results |
 | `/standings` | Team standings by division with expandable per-match history |
 | `/matches` | Full schedule — upcoming rounds and completed results with scores |
-| `/leaderboard` | Player stats table — PPR, MPR, records, 100+, 180s, etc. |
+| `/leaderboard` | Player stats table — PPR, MPR, records, 100+, 180s, etc. with name search |
 | `/players/[id]` | Individual player profile — season summary, week-by-week breakdown, and DC recap links |
 | `/teams` | Team rosters, captains, venue info, and collapsible past/upcoming schedule per team |
-| `/about` | League rules, scoring explanation, and stat glossary |
-| `/admin` | Admin panel — news posts, data refresh, site content, scoring config |
+| `/about` | League info, stat reference, and contact form |
+| `/admin` | Admin panel — news posts, data refresh, site config, scoring config |
 
-All public pages use ISR with a 1-hour TTL (`revalidate = 3600`), busted automatically post-scrape.
+Public pages use ISR (`revalidate = 86400`) busted automatically post-scrape. The home page is `force-dynamic` for immediate news post visibility.
 
 ---
 
@@ -127,9 +136,10 @@ Coverage is configured in `vitest.config.ts` and targets the pure utility layer 
 
 | File | What's tested |
 |---|---|
-| `lib/format.ts` | `formatShortDate`, `formatRoundLabel` |
+| `lib/format.ts` | `formatShortDate`, `formatRoundLabel`, `formatCaptainName` |
 | `lib/schedule.ts` | `groupTeamSchedule` — splits and sorts past/upcoming matches |
 | `lib/scrape-utils.ts` | `parseCricketNotable`, `gameType`, `setWinner`, `weekKeyToISODate`, `guidToFakeId` |
+| `lib/leaderboard-filter.ts` | `filterLeaderboardByName` — case-insensitive substring search |
 
 ---
 
@@ -186,7 +196,7 @@ curl -X POST https://your-site.netlify.app/api/scrape \
 
 Body options: `{ seasonId?: number, all?: boolean, force?: boolean }`
 
-**Automatic:** Every Wednesday at 6:00 AM ET via `netlify/functions/scheduled-scrape.mts`.
+**Automatic:** Every Wednesday and Thursday at 5:00 AM ET via `netlify/functions/scheduled-scrape.mts`.
 
 ### DartConnect API endpoints used
 
@@ -252,15 +262,19 @@ lib/
   scrape-utils.ts             Pure helpers extracted from scraper (tested)
   dartconnect.ts              DartConnect fetch helpers and venue parser
   schedule.ts                 groupTeamSchedule — splits matches into past/upcoming (tested)
-  format.ts                   Shared date formatting utilities (tested)
+  format.ts                   Shared date/name formatting utilities (tested)
+  leaderboard-filter.ts       filterLeaderboardByName — pure search helper (tested)
 
 components/
   VenueToggle.tsx             Expandable venue info with map pin icon
   SeasonSelector.tsx          Season switcher (URL search param)
   DivisionSelector.tsx        Division filter (URL search param)
   NavLinks.tsx                Main navigation links
+  NewsCarousel.tsx            Auto-advancing news post carousel for home page
+  ContactForm.tsx             Contact form — POSTs to /api/contact via Resend
+  LeaderboardTable.tsx        Leaderboard with name search and autocomplete
 
 netlify/functions/
-  scheduled-scrape.mts        Wednesday 6 AM ET cron trigger
-  scrape-background.ts        Long-running background scrape handler
+  scheduled-scrape.mts        Wed + Thu 5 AM ET cron trigger
+  scrape-background.ts        Long-running background scrape handler (up to 15 min)
 ```

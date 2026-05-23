@@ -14,15 +14,10 @@ export default function ContactForm() {
     e.preventDefault();
     setStatus("sending");
     try {
-      const res = await fetch("/netlify-forms.html", {
+      const res = await fetch("/api/contact", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          "form-name": "contact",
-          name,
-          email,
-          message,
-        }).toString(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, message }),
       });
       if (!res.ok) throw new Error(`${res.status}`);
       setStatus("success");
@@ -49,9 +44,6 @@ export default function ContactForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Honeypot — hidden from real users, bots fill it in */}
-      <input type="text" name="bot-field" className="hidden" aria-hidden="true" tabIndex={-1} />
-
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Name</label>
