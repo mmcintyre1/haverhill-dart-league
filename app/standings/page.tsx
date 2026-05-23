@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { db, seasons, teams, matches } from "@/lib/db";
+import { db, seasons, teams, matches, playerStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
 import { eq, and, or, gt, desc, asc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
@@ -31,7 +31,7 @@ type MatchRow = {
 };
 
 async function getStandings(seasonId: number, divisionFilter: string | null) {
-  const [allTeams, allMatches, allDivisions] = await Promise.all([
+  const [allTeams, allMatches, allDivisions, allPlayerStats] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
       .select()
@@ -44,7 +44,22 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       )
       .orderBy(asc(matches.schedDate)),
     db.select().from(divisions).where(eq(divisions.seasonId, seasonId)),
+    db
+      .select({ teamId: playerStats.teamId, mpr: playerStats.mpr, ppr: playerStats.ppr })
+      .from(playerStats)
+      .where(and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "REG"))),
   ]);
+
+  const teamMprPpr = new Map<number, { mprSum: number; mprN: number; pprSum: number; pprN: number }>();
+  for (const ps of allPlayerStats) {
+    if (!ps.teamId) continue;
+    const e = teamMprPpr.get(ps.teamId) ?? { mprSum: 0, mprN: 0, pprSum: 0, pprN: 0 };
+    const mpr = ps.mpr ? parseFloat(String(ps.mpr)) : NaN;
+    const ppr = ps.ppr ? parseFloat(String(ps.ppr)) : NaN;
+    if (!isNaN(mpr) && mpr > 0) { e.mprSum += mpr; e.mprN++; }
+    if (!isNaN(ppr) && ppr > 0) { e.pprSum += ppr; e.pprN++; }
+    teamMprPpr.set(ps.teamId, e);
+  }
 
   const divNameById = new Map(allDivisions.map((d) => [d.id, d.name]));
 
@@ -56,17 +71,22 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       wins: number;
       losses: number;
       pts: number;
+      mpr: number | null;
+      ppr: number | null;
       matchRows: MatchRow[];
     }
   >();
 
   for (const t of allTeams) {
+    const tm = teamMprPpr.get(t.id);
     stats.set(t.id, {
       name: t.name,
       divisionName: null,
       wins: 0,
       losses: 0,
       pts: 0,
+      mpr: tm && tm.mprN > 0 ? tm.mprSum / tm.mprN : null,
+      ppr: tm && tm.pprN > 0 ? tm.pprSum / tm.pprN : null,
       matchRows: [],
     });
   }
@@ -208,6 +228,8 @@ export default async function StandingsPage({
                 <div className="w-12 text-center">W</div>
                 <div className="w-12 text-center">L</div>
                 <div className="hidden sm:block w-16 text-center">Pct</div>
+                <div className="hidden sm:block w-16 text-center text-emerald-600">MPR</div>
+                <div className="hidden sm:block w-16 text-center text-sky-600">3DA</div>
                 <div className="w-16 text-center text-amber-600">Pts</div>
               </div>
 
@@ -239,6 +261,8 @@ export default async function StandingsPage({
                       <span className="w-12 text-center text-sm text-slate-200 tabular-nums font-semibold">{row.wins}</span>
                       <span className="w-12 text-center text-sm text-slate-400 tabular-nums">{row.losses}</span>
                       <span className="hidden sm:inline-block w-16 text-center text-sm text-slate-400 tabular-nums">{pct}</span>
+                      <span className="hidden sm:inline-block w-16 text-center text-sm text-emerald-400 tabular-nums">{row.mpr != null ? row.mpr.toFixed(2) : "—"}</span>
+                      <span className="hidden sm:inline-block w-16 text-center text-sm text-sky-400 tabular-nums">{row.ppr != null ? row.ppr.toFixed(2) : "—"}</span>
                       <span className="w-16 text-center text-sm text-amber-400 tabular-nums font-semibold">{row.pts}</span>
                     </summary>
 
