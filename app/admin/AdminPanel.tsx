@@ -902,9 +902,19 @@ function DocumentsTab({ secret }: { secret: string }) {
 
 // ── Site Config tab ───────────────────────────────────────────────────────────
 
+const DEFAULT_ABOUT =
+  "We play on Tuesday nights. The Haverhill Dart League sponsors and teams reside in the " +
+  "greater Haverhill area. Any team out of a club in a city or town within 9 miles of the " +
+  "city center (use 323 Main St as an address) Haverhill, MA is welcome to join. We have " +
+  "teams playing out of Haverhill, Plaistow, NH, Merrimack, MA, Methuen, MA and Lawrence, " +
+  "MA. While affording short travel times for our players whenever possible, we promote " +
+  "sportsmanship, and hope to have our players grow in the sport by advancing through the " +
+  "divisions.";
+
 function SiteConfigTab({ secret }: { secret: string }) {
   const [contactEmail, setContactEmail] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [aboutDescription, setAboutDescription] = useState("");
+  const [savingKey, setSavingKey] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
 
   const authHeaders = (extra?: Record<string, string>): Record<string, string> => ({
@@ -917,14 +927,14 @@ function SiteConfigTab({ secret }: { secret: string }) {
     fetch("/api/admin/site-config", { headers: authHeaders({ "Content-Type": "" }) })
       .then((r) => r.json())
       .then((rows: { key: string; value: string }[]) => {
-        const email = rows.find((r) => r.key === "contact.email")?.value ?? "";
-        setContactEmail(email);
+        setContactEmail(rows.find((r) => r.key === "contact.email")?.value ?? "");
+        setAboutDescription(rows.find((r) => r.key === "about.description")?.value ?? DEFAULT_ABOUT);
       })
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save(key: string, value: string) {
-    setSaving(true);
+    setSavingKey(key);
     setResult(null);
     try {
       const res = await fetch("/api/admin/site-config", {
@@ -937,17 +947,40 @@ function SiteConfigTab({ secret }: { secret: string }) {
     } catch (e) {
       setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
-      setSaving(false);
+      setSavingKey(null);
     }
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* About description */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-200 mb-1">About the League</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Paragraph shown in the About section of the About page.
+        </p>
+        <textarea
+          rows={6}
+          value={aboutDescription}
+          onChange={(e) => setAboutDescription(e.target.value)}
+          className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500 resize-y"
+        />
+        <button
+          onClick={() => save("about.description", aboutDescription)}
+          disabled={savingKey === "about.description"}
+          className="mt-2 px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
+        >
+          {savingKey === "about.description" ? "Saving…" : "Save"}
+        </button>
+      </div>
+
+      {/* Contact email */}
       <div>
         <h3 className="text-sm font-semibold text-slate-200 mb-1">Contact</h3>
         <p className="text-xs text-slate-500 mb-3">
-          Email address displayed on the About page as a mailto link. This does <strong className="text-slate-400">not</strong> configure
-          where form submissions are delivered — that must be set separately in the{" "}
+          Email address displayed on the About page as a mailto link. This does{" "}
+          <strong className="text-slate-400">not</strong> configure where form submissions are
+          delivered — that must be set separately in the{" "}
           <a href="https://app.netlify.com" target="_blank" rel="noopener noreferrer" className="text-amber-500 hover:underline">
             Netlify dashboard
           </a>{" "}
@@ -968,13 +1001,14 @@ function SiteConfigTab({ secret }: { secret: string }) {
           </div>
           <button
             onClick={() => save("contact.email", contactEmail)}
-            disabled={saving}
+            disabled={savingKey === "contact.email"}
             className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50 shrink-0"
           >
-            {saving ? "Saving…" : "Save"}
+            {savingKey === "contact.email" ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
+
       {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
     </div>
   );
