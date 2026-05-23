@@ -338,7 +338,7 @@ export default async function StandingsPage({
                               <span className="hidden sm:block w-16 text-center text-sm text-emerald-400 tabular-nums">{m.weekMpr != null ? m.weekMpr.toFixed(2) : "—"}</span>
                               <span className="hidden sm:block w-16 text-center text-sm text-sky-400 tabular-nums">{m.weekPpr != null ? m.weekPpr.toFixed(2) : "—"}</span>
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold tabular-nums ${
+                                <span className={`inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs font-semibold tabular-nums min-w-[3.5rem] ${
                                   won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
                                 }`}>
                                   {won ? "W" : "L"} {m.teamScore}–{m.opponentScore}
