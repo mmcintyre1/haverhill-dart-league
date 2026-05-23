@@ -244,11 +244,12 @@ export async function fetchMatchStandings(
 /** Fetch full schedule / lineups for a given season */
 export async function fetchLineups(
   seasonId: number,
-  cookies?: { xsrf: string; session: string }
+  cookies?: { xsrf: string; session: string },
+  seasonStatus?: "REG" | "POST"
 ): Promise<unknown> {
   return dcPost(
     `/api/league/${LEAGUE_ID}/lineups/${seasonId}`,
-    {},
+    seasonStatus ? { season_status: seasonStatus } : {},
     cookies
   );
 }

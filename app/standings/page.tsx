@@ -56,20 +56,17 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       wins: number;
       losses: number;
       pts: number;
-      usedDC: boolean;
       matchRows: MatchRow[];
     }
   >();
 
   for (const t of allTeams) {
-    const hasDC = t.dcWins != null && t.dcLosses != null;
     stats.set(t.id, {
       name: t.name,
       divisionName: null,
-      wins: hasDC ? t.dcWins! : 0,
-      losses: hasDC ? t.dcLosses! : 0,
-      pts: hasDC && t.dcLeaguePoints != null ? t.dcLeaguePoints : 0,
-      usedDC: hasDC,
+      wins: 0,
+      losses: 0,
+      pts: 0,
       matchRows: [],
     });
   }
@@ -94,11 +91,9 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
         opponentScore: as_,
         dcGuid: m.dcGuid ?? null,
       });
-      if (!home.usedDC) {
-        home.pts += hs;
-        if (hs > as_) home.wins++;
-        else home.losses++;
-      }
+      home.pts += hs;
+      if (hs > as_) home.wins++;
+      else home.losses++;
     }
     if (away) {
       away.matchRows.push({
@@ -109,11 +104,9 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
         opponentScore: hs,
         dcGuid: m.dcGuid ?? null,
       });
-      if (!away.usedDC) {
-        away.pts += as_;
-        if (as_ > hs) away.wins++;
-        else away.losses++;
-      }
+      away.pts += as_;
+      if (as_ > hs) away.wins++;
+      else away.losses++;
     }
   }
 

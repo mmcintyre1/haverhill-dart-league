@@ -170,7 +170,7 @@ async function scrapeSeasonStats(
   debug: Record<string, unknown>
 ): Promise<{ playersUpdated: number; matchesUpdated: number }> {
 
-  // ── A. Fetch schedule / lineups ─────────────────────────────────────────────
+  // ── A. Fetch schedule / lineups (REG + POST) ────────────────────────────────
   let matchList: DCMatch[] = [];
   try {
     const c = await getCSRFCookies();
@@ -179,6 +179,18 @@ async function scrapeSeasonStats(
     debug.matchListLength = matchList.length;
   } catch (e) {
     debug.lineupsError = e instanceof Error ? e.message : String(e);
+  }
+  try {
+    const c = await getCSRFCookies();
+    const rawPost = await fetchLineups(targetSeasonId, c, "POST");
+    const postList = normalizeLineups(rawPost);
+    if (postList.length > 0) {
+      const existingIds = new Set(matchList.map((m) => m.id));
+      matchList = [...matchList, ...postList.filter((m) => !existingIds.has(m.id))];
+      debug.postLineupsLength = postList.length;
+    }
+  } catch (e) {
+    debug.postLineupsError = e instanceof Error ? e.message : String(e);
   }
 
   // ── B. Fetch standings (team competitors) ───────────────────────────────────
@@ -891,18 +903,70 @@ async function scrapeSeasonStats(
     const postGuids = Array.from(postMatchMeta.keys());
     const postSegmentsMap = new Map<string, DCGameLeg[][]>();
     const postMatchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();
+    const postMatchDataMap = new Map<string, Awaited<ReturnType<typeof fetchMatchData>>>();
 
     await Promise.allSettled(
       postGuids.map(async (guid) => {
-        const [sets, pStats] = await Promise.allSettled([
+        const [sets, pStats, mData] = await Promise.allSettled([
           fetchGameSegments(guid),
           fetchMatchPlayerStats(guid),
+          fetchMatchData(guid),
         ]);
         if (sets.status === "fulfilled") postSegmentsMap.set(guid, sets.value);
         if (pStats.status === "fulfilled") postMatchPlayerStatsMap.set(guid, pStats.value);
+        if (mData.status === "fulfilled") postMatchDataMap.set(guid, mData.value);
       })
     );
     debug.postSegmentsLoaded = postSegmentsMap.size;
+
+    // Upsert playoff matches into the matches table — they don't come through fetchLineups
+    for (const [guid, meta] of postMatchMeta) {
+      const homeSerialId = dcTeamToSerialId.get(Number(meta.homeTeamId)) ?? null;
+      const awaySerialId = dcTeamToSerialId.get(Number(meta.awayTeamId)) ?? null;
+      const findTeamName = (dcId: string) => {
+        const c = teamCompetitors.find((t) => String(t.id) === dcId) as Record<string, unknown> | undefined;
+        return String(c?.team_name ?? c?.name ?? "");
+      };
+      const homeTeamName = findTeamName(meta.homeTeamId);
+      const awayTeamName = findTeamName(meta.awayTeamId);
+      const schedDate = weekKeyToISODate(meta.weekKey) ?? null;
+      const mData = postMatchDataMap.get(guid);
+      const homeScore = mData?.matchInfo?.opponents?.[0]?.score ?? 0;
+      const awayScore = mData?.matchInfo?.opponents?.[1]?.score ?? 0;
+      const isComplete = homeScore + awayScore > 0;
+      await db
+        .insert(matches)
+        .values({
+          id: guidToFakeId(guid),
+          seasonId: targetSeasonId,
+          homeTeamId: homeSerialId,
+          awayTeamId: awaySerialId,
+          homeTeamName,
+          awayTeamName,
+          schedDate,
+          prettyDate: meta.weekKey || null,
+          status: isComplete ? "C" : "P",
+          homeScore,
+          awayScore,
+          dcGuid: guid,
+          seasonStatus: "POST",
+        })
+        .onConflictDoUpdate({
+          target: matches.dcGuid,
+          set: {
+            homeTeamId: homeSerialId,
+            awayTeamId: awaySerialId,
+            homeTeamName,
+            awayTeamName,
+            schedDate,
+            prettyDate: meta.weekKey || null,
+            homeScore,
+            awayScore,
+            status: isComplete ? "C" : "P",
+            updatedAt: new Date(),
+          },
+        });
+    }
 
     const postAccumByName = new Map<string, PlayerAccum>();
     for (const p of postRoster) {

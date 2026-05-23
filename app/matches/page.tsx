@@ -42,6 +42,7 @@ async function getAllMatches(seasonId: number) {
       awayScore: matches.awayScore,
       prettyDate: matches.prettyDate,
       dcGuid: matches.dcGuid,
+      seasonStatus: matches.seasonStatus,
       homeTeamVenueName: homeTeams.venueName,
       homeTeamVenueAddress: homeTeams.venueAddress,
       homeTeamVenuePhone: homeTeams.venuePhone,
@@ -110,25 +111,28 @@ export default async function MatchesPage({
   // Compare ISO date strings directly to avoid local-timezone vs UTC-midnight mismatches.
   const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD" UTC
 
-  const completed = filtered.filter(
-    (m) =>
-      m.status === "C" ||
-      (m.homeScore ?? 0) + (m.awayScore ?? 0) > 0 ||
-      (m.schedDate != null && m.schedDate < todayStr)
-  );
-  const pending = filtered.filter(
-    (m) =>
-      m.status !== "C" &&
-      (m.homeScore ?? 0) + (m.awayScore ?? 0) === 0 &&
-      (m.schedDate == null || m.schedDate >= todayStr)
-  );
+  const isComplete = (m: (typeof filtered)[0]) =>
+    m.status === "C" ||
+    (m.homeScore ?? 0) + (m.awayScore ?? 0) > 0 ||
+    (m.schedDate != null && m.schedDate < todayStr);
 
-  const upcomingRounds = groupByRound(pending).sort((a, b) =>
-    (a.matches[0]?.schedDate ?? "").localeCompare(b.matches[0]?.schedDate ?? "")
-  );
-  const resultsRounds = groupByRound(completed).sort((a, b) =>
-    (b.matches[0]?.schedDate ?? "").localeCompare(a.matches[0]?.schedDate ?? "")
-  );
+  const completed = filtered.filter(isComplete);
+  const pending = filtered.filter((m) => !isComplete(m));
+
+  const sortAsc = (a: { matches: { schedDate: string | null }[] }, b: { matches: { schedDate: string | null }[] }) =>
+    (a.matches[0]?.schedDate ?? "").localeCompare(b.matches[0]?.schedDate ?? "");
+  const sortDesc = (a: { matches: { schedDate: string | null }[] }, b: { matches: { schedDate: string | null }[] }) =>
+    (b.matches[0]?.schedDate ?? "").localeCompare(a.matches[0]?.schedDate ?? "");
+
+  const regPending = pending.filter((m) => m.seasonStatus !== "POST");
+  const postPending = pending.filter((m) => m.seasonStatus === "POST");
+  const regCompleted = completed.filter((m) => m.seasonStatus !== "POST");
+  const postCompleted = completed.filter((m) => m.seasonStatus === "POST");
+
+  const upcomingRegRounds = groupByRound(regPending).sort(sortAsc);
+  const upcomingPostRounds = groupByRound(postPending).sort(sortAsc);
+  const resultsPostRounds = groupByRound(postCompleted).sort(sortDesc);
+  const resultsRegRounds = groupByRound(regCompleted).sort(sortDesc);
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
   const activeSeason = allSeasons.find((s) => s.id === activeId);
@@ -156,14 +160,14 @@ export default async function MatchesPage({
           <span className="text-sm text-slate-400">{pending.length} matches remaining</span>
         </div>
 
-        {upcomingRounds.length === 0 ? (
+        {pending.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-700 py-10 text-center text-slate-500">
             <p className="text-3xl mb-3 select-none">◎</p>
             <p className="font-medium">No upcoming matches.</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {upcomingRounds.map(({ round, matches: ms }) => {
+            {upcomingRegRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
               const timeStr = formatTime(first?.schedTime ?? null);
               const label = formatShortDate(first?.schedDate);
@@ -213,12 +217,53 @@ export default async function MatchesPage({
                 </div>
               );
             })}
+            {upcomingPostRounds.length > 0 && (
+              <>
+                <div className="flex items-center gap-4 py-1">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
+                {upcomingPostRounds.map(({ round, matches: ms }) => {
+                  const first = ms[0];
+                  const timeStr = formatTime(first?.schedTime ?? null);
+                  const label = formatShortDate(first?.schedDate);
+                  return (
+                    <div key={`post-${round ?? first?.schedDate}`} className="rounded-lg border border-amber-900/40 overflow-hidden shadow-xl">
+                      <div className="bg-slate-800 px-4 py-2 flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-slate-200">{label}</span>
+                        {timeStr && (
+                          <span className="shrink-0 text-xs text-slate-400 bg-slate-700/60 border border-slate-600/50 rounded px-2 py-0.5">
+                            {timeStr}
+                          </span>
+                        )}
+                      </div>
+                      <div className="divide-y divide-slate-700/50">
+                        {ms.map((m) => (
+                          <div key={m.id} className="bg-slate-900 hover:bg-slate-800/60 transition-colors px-4 py-2.5 flex items-center text-sm">
+                            <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
+                            <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium text-right truncate pr-1">{m.awayTeamName}</span>
+                            <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                            <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium truncate pl-1">{m.homeTeamName}</span>
+                            <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
+                              {m.homeTeamVenueName && (
+                                <VenueToggle name={m.homeTeamVenueName} address={m.homeTeamVenueAddress} phone={m.homeTeamVenuePhone} />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
         )}
       </div>
 
       {/* ── Divider ── */}
-      {resultsRounds.length > 0 && (
+      {completed.length > 0 && (
         <div className="flex items-center gap-4">
           <div className="flex-1 h-px bg-slate-800" />
           <span className="text-xs uppercase tracking-widest text-slate-600 shrink-0">Results</span>
@@ -227,7 +272,7 @@ export default async function MatchesPage({
       )}
 
       {/* ── Results ── */}
-      {resultsRounds.length > 0 && (
+      {completed.length > 0 && (
         <div>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-100">
@@ -237,11 +282,19 @@ export default async function MatchesPage({
           </div>
 
           <div className="space-y-4">
-            {resultsRounds.map(({ round, matches: ms }) => {
+            {resultsPostRounds.length > 0 && (
+              <div className="flex items-center gap-4 py-1">
+                <div className="flex-1 h-px bg-slate-800" />
+                <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                <div className="flex-1 h-px bg-slate-800" />
+              </div>
+            )}
+            {[...resultsPostRounds, ...resultsRegRounds].map(({ round, matches: ms }) => {
               const first = ms[0];
+              const isPost = first && (first as typeof first & { seasonStatus?: string }).seasonStatus === "POST";
               const label = formatShortDate(first?.schedDate);
               return (
-                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                <div key={(isPost ? "post-" : "") + (round ?? first?.schedDate)} className={`rounded-lg border overflow-hidden shadow-xl ${isPost ? "border-amber-900/40" : "border-slate-700"}`}>
                   <div className="bg-slate-800 px-4 py-2">
                     <span className="text-sm font-semibold text-slate-200">
                       {label}
