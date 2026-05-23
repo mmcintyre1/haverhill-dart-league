@@ -945,9 +945,13 @@ function SiteConfigTab({ secret }: { secret: string }) {
     <div className="space-y-6">
       <div>
         <h3 className="text-sm font-semibold text-slate-200 mb-1">Contact</h3>
-        <p className="text-xs text-slate-500 mb-4">
-          Email address shown on the Contact section of the About page. Netlify will also
-          notify this address when a contact form is submitted.
+        <p className="text-xs text-slate-500 mb-3">
+          Email address displayed on the About page as a mailto link. This does <strong className="text-slate-400">not</strong> configure
+          where form submissions are delivered — that must be set separately in the{" "}
+          <a href="https://app.netlify.com" target="_blank" rel="noopener noreferrer" className="text-amber-500 hover:underline">
+            Netlify dashboard
+          </a>{" "}
+          under <span className="text-slate-300">Forms → contact → Notifications</span>.
         </p>
         <div className="flex gap-3 items-end">
           <div className="flex-1">
