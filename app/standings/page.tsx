@@ -45,19 +45,28 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       .orderBy(asc(matches.schedDate)),
     db.select().from(divisions).where(eq(divisions.seasonId, seasonId)),
     db
-      .select({ teamId: playerStats.teamId, mpr: playerStats.mpr, ppr: playerStats.ppr })
+      .select({ teamId: playerStats.teamId, mpr: playerStats.mpr, ppr: playerStats.ppr, crkt: playerStats.crkt, col601: playerStats.col601, col501: playerStats.col501 })
       .from(playerStats)
       .where(and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "REG"))),
   ]);
 
-  const teamMprPpr = new Map<number, { mprSum: number; mprN: number; pprSum: number; pprN: number }>();
+  const parseRecord = (r: string | null) => {
+    if (!r) return 0;
+    const [w, l] = r.split("-").map(Number);
+    return (isNaN(w) ? 0 : w) + (isNaN(l) ? 0 : l);
+  };
+
+  // Weighted averages: weight each player's MPR by cricket games played, PPR by 01 games played
+  const teamMprPpr = new Map<number, { mprWsum: number; mprWtotal: number; pprWsum: number; pprWtotal: number }>();
   for (const ps of allPlayerStats) {
     if (!ps.teamId) continue;
-    const e = teamMprPpr.get(ps.teamId) ?? { mprSum: 0, mprN: 0, pprSum: 0, pprN: 0 };
+    const e = teamMprPpr.get(ps.teamId) ?? { mprWsum: 0, mprWtotal: 0, pprWsum: 0, pprWtotal: 0 };
     const mpr = ps.mpr ? parseFloat(String(ps.mpr)) : NaN;
     const ppr = ps.ppr ? parseFloat(String(ps.ppr)) : NaN;
-    if (!isNaN(mpr) && mpr > 0) { e.mprSum += mpr; e.mprN++; }
-    if (!isNaN(ppr) && ppr > 0) { e.pprSum += ppr; e.pprN++; }
+    const crktGames = parseRecord(ps.crkt);
+    const zeroOneGames = parseRecord(ps.col601) + parseRecord(ps.col501);
+    if (!isNaN(mpr) && mpr > 0 && crktGames > 0) { e.mprWsum += mpr * crktGames; e.mprWtotal += crktGames; }
+    if (!isNaN(ppr) && ppr > 0 && zeroOneGames > 0) { e.pprWsum += ppr * zeroOneGames; e.pprWtotal += zeroOneGames; }
     teamMprPpr.set(ps.teamId, e);
   }
 
@@ -85,8 +94,8 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       wins: 0,
       losses: 0,
       pts: 0,
-      mpr: tm && tm.mprN > 0 ? tm.mprSum / tm.mprN : null,
-      ppr: tm && tm.pprN > 0 ? tm.pprSum / tm.pprN : null,
+      mpr: tm && tm.mprWtotal > 0 ? tm.mprWsum / tm.mprWtotal : null,
+      ppr: tm && tm.pprWtotal > 0 ? tm.pprWsum / tm.pprWtotal : null,
       matchRows: [],
     });
   }
