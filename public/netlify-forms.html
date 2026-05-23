@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <!-- Netlify form detection page. Not linked anywhere — exists only so Netlify
+         registers the "contact" form at deploy time for JS-rendered submissions. -->
+    <form name="contact" data-netlify="true" netlify-honeypot="bot-field" hidden>
+      <input type="text" name="name" />
+      <input type="email" name="email" />
+      <textarea name="message"></textarea>
+      <input type="text" name="bot-field" />
+    </form>
+  </body>
+</html>

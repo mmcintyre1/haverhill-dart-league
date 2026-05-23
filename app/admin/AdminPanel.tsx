@@ -9,7 +9,7 @@ type Season = {
   lastScrapedAt: Date | null;
 };
 
-type TabId = "posts" | "refresh" | "scoring" | "documents";
+type TabId = "posts" | "refresh" | "scoring" | "documents" | "config";
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     { id: "refresh", label: "Data Refresh" },
     { id: "scoring", label: "Scoring" },
     { id: "documents", label: "Documents" },
+    { id: "config", label: "Site Config" },
   ];
   return (
     <div className="flex gap-1 mb-6 border-b border-slate-800">
@@ -899,6 +900,82 @@ function DocumentsTab({ secret }: { secret: string }) {
   );
 }
 
+// ── Site Config tab ───────────────────────────────────────────────────────────
+
+function SiteConfigTab({ secret }: { secret: string }) {
+  const [contactEmail, setContactEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<Result | null>(null);
+
+  const authHeaders = (extra?: Record<string, string>): Record<string, string> => ({
+    "Content-Type": "application/json",
+    ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+    ...extra,
+  });
+
+  useEffect(() => {
+    fetch("/api/admin/site-config", { headers: authHeaders({ "Content-Type": "" }) })
+      .then((r) => r.json())
+      .then((rows: { key: string; value: string }[]) => {
+        const email = rows.find((r) => r.key === "contact.email")?.value ?? "";
+        setContactEmail(email);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save(key: string, value: string) {
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/admin/site-config", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ key, value }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setResult({ ok: true, message: "Saved" });
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-200 mb-1">Contact</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Email address shown on the Contact section of the About page. Netlify will also
+          notify this address when a contact form is submitted.
+        </p>
+        <div className="flex gap-3 items-end">
+          <div className="flex-1">
+            <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">
+              Contact Email
+            </label>
+            <input
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+              placeholder="league@example.com"
+            />
+          </div>
+          <button
+            onClick={() => save("contact.email", contactEmail)}
+            disabled={saving}
+            className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50 shrink-0"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+      {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function AdminPanel({ seasons, secret }: { seasons: Season[]; secret: string }) {
@@ -909,8 +986,9 @@ export default function AdminPanel({ seasons, secret }: { seasons: Season[]; sec
       <TabBar active={tab} onChange={setTab} />
       {tab === "posts"    ? <PostsTab secret={secret} /> :
        tab === "refresh"  ? <RefreshTab seasons={seasons} secret={secret} /> :
-       tab === "scoring"   ? <ScoringTab seasons={seasons} secret={secret} /> :
-                             <DocumentsTab secret={secret} />}
+       tab === "scoring"  ? <ScoringTab seasons={seasons} secret={secret} /> :
+       tab === "documents"? <DocumentsTab secret={secret} /> :
+                            <SiteConfigTab secret={secret} />}
     </div>
   );
 }

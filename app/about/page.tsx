@@ -1,6 +1,21 @@
+import { db, siteContent } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import ContactForm from "@/components/ContactForm";
+
 export const revalidate = 86400;
 
+async function getContactEmail(): Promise<string | null> {
+  const [row] = await db
+    .select({ value: siteContent.value })
+    .from(siteContent)
+    .where(eq(siteContent.key, "contact.email"))
+    .limit(1);
+  return row?.value ?? null;
+}
+
 export default async function AboutPage() {
+  const contactEmail = await getContactEmail();
+
   return (
     <div className="max-w-3xl space-y-10">
       <div>
@@ -39,6 +54,25 @@ export default async function AboutPage() {
           <a href="/leaderboard" className="text-amber-400 hover:underline">Leaderboard</a>{" "}
           via the <span className="text-slate-300">ⓘ Scoring Guide</span> toggle.
         </p>
+      </section>
+
+      {/* Contact */}
+      <section>
+        <div className="flex items-center gap-3 mb-4">
+          <h2 className="text-base font-semibold text-slate-100">Contact Us</h2>
+          <div className="flex-1 h-px bg-slate-800" />
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900 px-6 py-5 space-y-5">
+          {contactEmail && (
+            <p className="text-slate-400 text-sm">
+              You can also reach us directly at{" "}
+              <a href={`mailto:${contactEmail}`} className="text-amber-400 hover:underline">
+                {contactEmail}
+              </a>.
+            </p>
+          )}
+          <ContactForm />
+        </div>
       </section>
     </div>
   );
