@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { db, seasons, playerStats, players, playerSeasonTeams, scoringConfig, playerWeekStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
-import { eq, and, desc, asc, or, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, or, isNull, isNotNull } from "drizzle-orm";
 import LeaderboardTable, { type LeaderboardRow } from "@/components/LeaderboardTable";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
@@ -74,8 +74,8 @@ async function getLeaderboard(
     )
     .where(
       divisionFilter
-        ? and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase), eq(playerSeasonTeams.divisionName, divisionFilter))
-        : and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase))
+        ? and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase), eq(playerSeasonTeams.divisionName, divisionFilter), or(isNotNull(playerStats.mpr), isNotNull(playerStats.ppr)))
+        : and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, phase), or(isNotNull(playerStats.mpr), isNotNull(playerStats.ppr)))
     )
     .orderBy(asc(playerStats.pos));
 
