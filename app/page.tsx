@@ -43,17 +43,16 @@ async function getNextRound(seasonId: number) {
     })
     .from(matches)
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
-    .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P"), isNotNull(matches.roundSeq)))
-    .orderBy(asc(matches.roundSeq), asc(matches.schedDate))
+    .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P")))
+    .orderBy(asc(matches.schedDate), asc(matches.roundSeq))
     .limit(20);
 
   if (pending.length === 0) return null;
-  const nextRound = pending[0].roundSeq;
   const nextDate = pending[0].schedDate ?? null;
   return {
-    round: nextRound,
+    round: pending[0].roundSeq,
     schedDate: nextDate,
-    matches: pending.filter((m) => m.roundSeq === nextRound && m.schedDate === nextDate),
+    matches: pending.filter((m) => m.schedDate === nextDate),
   };
 }
 
@@ -64,20 +63,18 @@ async function getLastRound(seasonId: number) {
     .where(
       and(
         eq(matches.seasonId, seasonId),
-        isNotNull(matches.roundSeq),
         or(eq(matches.status, "C"), gt(matches.homeScore!, 0))
       )
     )
-    .orderBy(desc(matches.roundSeq), asc(matches.schedDate))
+    .orderBy(desc(matches.schedDate), asc(matches.roundSeq))
     .limit(20);
 
   if (completed.length === 0) return null;
-  const lastRound = completed[0].roundSeq;
   const lastDate = completed[0].schedDate ?? null;
   return {
-    round: lastRound,
+    round: completed[0].roundSeq,
     schedDate: lastDate,
-    matches: completed.filter((m) => m.roundSeq === lastRound && m.schedDate === lastDate),
+    matches: completed.filter((m) => m.schedDate === lastDate),
   };
 }
 

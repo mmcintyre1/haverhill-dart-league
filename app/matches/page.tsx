@@ -283,18 +283,66 @@ export default async function MatchesPage({
 
           <div className="space-y-4">
             {resultsPostRounds.length > 0 && (
+              <>
+                <div className="flex items-center gap-4 py-1">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
+                {resultsPostRounds.map(({ round, matches: ms }) => {
+                  const first = ms[0];
+                  const label = formatShortDate(first?.schedDate);
+                  return (
+                    <div key={`post-${round ?? first?.schedDate}`} className="rounded-lg border border-amber-900/40 overflow-hidden shadow-xl">
+                      <div className="bg-slate-800 px-4 py-2">
+                        <span className="text-sm font-semibold text-slate-200">{label}</span>
+                      </div>
+                      <table className="w-full table-fixed text-sm border-collapse">
+                        <colgroup><col className="w-8" /><col /><col className="w-20" /><col /></colgroup>
+                        <tbody>
+                          {ms.map((m) => {
+                            const hs = m.homeScore ?? 0;
+                            const as_ = m.awayScore ?? 0;
+                            const scored = hs + as_ > 0;
+                            const hw = hs > as_;
+                            const aw = as_ > hs;
+                            return (
+                              <tr key={m.id} className="border-t border-slate-700/50 bg-slate-900 hover:bg-slate-800/60 transition-colors">
+                                <td className="pl-3 py-2.5 text-xs text-slate-500">{m.divisionName ?? ""}</td>
+                                <td className={`px-2 py-2.5 text-right truncate ${hw ? "text-white font-semibold" : "text-slate-400"}`}>{m.homeTeamName}</td>
+                                <td className="py-2.5 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    {scored ? <span className="font-bold tabular-nums text-slate-200">{hs} – {as_}</span> : <span className="text-slate-600 text-xs">—</span>}
+                                    {m.dcGuid && (
+                                      <a href={`https://recap.dartconnect.com/games/${m.dcGuid}`} target="_blank" rel="noopener noreferrer" aria-label="View on DartConnect" className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
+                                      </a>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className={`px-2 pr-3 py-2.5 truncate ${aw ? "text-white font-semibold" : "text-slate-400"}`}>{m.awayTeamName}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            {resultsPostRounds.length > 0 && resultsRegRounds.length > 0 && (
               <div className="flex items-center gap-4 py-1">
                 <div className="flex-1 h-px bg-slate-800" />
-                <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                <span className="text-xs uppercase tracking-widest text-slate-500 shrink-0 font-semibold">Regular Season</span>
                 <div className="flex-1 h-px bg-slate-800" />
               </div>
             )}
-            {[...resultsPostRounds, ...resultsRegRounds].map(({ round, matches: ms }) => {
+            {resultsRegRounds.map(({ round, matches: ms }) => {
               const first = ms[0];
-              const isPost = first && (first as typeof first & { seasonStatus?: string }).seasonStatus === "POST";
               const label = formatShortDate(first?.schedDate);
               return (
-                <div key={(isPost ? "post-" : "") + (round ?? first?.schedDate)} className={`rounded-lg border overflow-hidden shadow-xl ${isPost ? "border-amber-900/40" : "border-slate-700"}`}>
+                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
                   <div className="bg-slate-800 px-4 py-2">
                     <span className="text-sm font-semibold text-slate-200">
                       {label}
