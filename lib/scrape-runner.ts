@@ -227,7 +227,7 @@ async function scrapePhase(
   g3: G3Config,
   leaderboardMprByName: Map<string, string>,
   debug: Record<string, unknown>
-): Promise<{ playersUpdated: number }> {
+): Promise<{ playersUpdated: number; matchScoresUpdated: number }> {
 
   // ── C. Roster + history per team ────────────────────────────────────────────
   const roster: PlayerWithTeam[] = [];
@@ -798,7 +798,7 @@ async function scrapePhase(
   }
 
   debug[`${phase}_playersUpdated`] = playersUpdated;
-  return { playersUpdated };
+  return { playersUpdated, matchScoresUpdated };
 }
 
 // ── scrapeSeasonStats ─────────────────────────────────────────────────────────
@@ -972,18 +972,20 @@ async function scrapeSeasonStats(
   }
 
   // ── REG pass ──────────────────────────────────────────────────────────────────
-  const { playersUpdated } = await scrapePhase(
+  const { playersUpdated, matchScoresUpdated: regMatchScores } = await scrapePhase(
     targetSeasonId, "REG", teamCompetitors, dcTeamToSerialId,
     dateToRoundSeq, new Map(), g3, leaderboardMprByName, debug
   );
+  matchesUpdated += regMatchScores;
 
   // ── POST pass ─────────────────────────────────────────────────────────────────
   const postSeedGuids = await loadPostSeedGuids(targetSeasonId, dcTeamToSerialId);
   debug.postDbSeedCount = postSeedGuids.size;
-  const { playersUpdated: postPlayersUpdated } = await scrapePhase(
+  const { playersUpdated: postPlayersUpdated, matchScoresUpdated: postMatchScores } = await scrapePhase(
     targetSeasonId, "POST", teamCompetitors, dcTeamToSerialId,
     new Map(), postSeedGuids, g3, new Map(), debug
   );
+  matchesUpdated += postMatchScores;
   debug.POST_playersUpdated = postPlayersUpdated;
 
   await db.update(seasons).set({ lastScrapedAt: new Date() }).where(eq(seasons.id, targetSeasonId));
