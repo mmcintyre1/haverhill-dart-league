@@ -261,5 +261,6 @@ export const scrapeLog = pgTable("scrape_log", {
   playersUpdated: integer("players_updated").default(0),
   matchesUpdated: integer("matches_updated").default(0),
   errorMessage: text("error_message"),
+  debugJson: text("debug_json"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

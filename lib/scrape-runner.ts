@@ -244,14 +244,18 @@ async function scrapePhase(
     try {
       const c = await getCSRFCookies();
       const res = await fetchPlayerStandings(targetSeasonId, { season_status: phase, opponent_guid: teamId }, c);
-      for (const p of res.roster ?? []) {
+      const rosterFromTeam = res.roster ?? [];
+      console.log(`[scrape] ${phase} roster team=${teamName}(${teamId}): ${rosterFromTeam.length} players, keys=${Object.keys(res).join(",")}`);
+      for (const p of rosterFromTeam) {
         const pid = (p as unknown as Record<string, unknown>).id as number;
         if (!seenPlayerIds.has(pid)) {
           seenPlayerIds.add(pid);
           roster.push({ ...(p as DCPlayerStat), _teamName: teamName });
         }
       }
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      console.log(`[scrape] ${phase} roster team=${teamName}(${teamId}) ERROR: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     // History fetch — separate try-catch
     try {
@@ -278,7 +282,9 @@ async function scrapePhase(
         }
       }
     } catch (e) {
-      historyDebug[teamName] = `err: ${e instanceof Error ? e.message : String(e)}`;
+      const msg = `err: ${e instanceof Error ? e.message : String(e)}`;
+      historyDebug[teamName] = msg;
+      console.log(`[scrape] ${phase} history team=${teamName}(${teamId}) ERROR: ${msg}`);
     }
   }
 
@@ -312,10 +318,41 @@ async function scrapePhase(
     }
   }
 
+  // DB roster fallback: if fetchPlayerStandings returned nothing for all teams,
+  // seed the roster from existing playerSeasonTeams for this season so we can still
+  // update stats. DC IDs are already in the players table from prior scrapes.
+  if (roster.length === 0 && phase === "REG") {
+    try {
+      const dbPlayers = await db
+        .select({ dcGuid: players.dcGuid, name: players.name, teamName: playerSeasonTeams.teamName })
+        .from(players)
+        .innerJoin(
+          playerSeasonTeams,
+          and(eq(players.id, playerSeasonTeams.playerId), eq(playerSeasonTeams.seasonId, targetSeasonId))
+        );
+      for (const p of dbPlayers) {
+        const [firstName, ...rest] = (p.name ?? "").split(" ");
+        roster.push({
+          id: parseInt(p.dcGuid ?? "0"),
+          player_first_name: firstName ?? "",
+          player_last_name: rest.join(" "),
+          player_rank: null,
+          matches: 0, legs: 0, wins: 0, points_01: 0, darts_01: 0, marks_cr: 0, darts_cr: 0, ppr: null, mpr: null, lw: null,
+          _teamName: p.teamName ?? "",
+        } as PlayerWithTeam);
+      }
+      debug[`${phase}_rosterFallbackToDb`] = roster.length;
+      console.log(`[scrape] ${phase} roster fallback from DB: ${roster.length} players`);
+    } catch (e) {
+      console.log(`[scrape] ${phase} roster DB fallback failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   debug[`${phase}_sampleHistoryEntry`] = sampleHistoryEntry;
   debug[`${phase}_rosterLength`] = roster.length;
   debug[`${phase}_matchGuids`] = matchMeta.size;
   debug[`${phase}_historyPerTeam`] = historyDebug;
+  console.log(`[scrape] ${phase} phase C done: roster=${roster.length}, matchGuids=${matchMeta.size}, historyPerTeam=${JSON.stringify(historyDebug)}`);
 
   // ── D. Fetch segments + authoritative scores + per-match player stats ────────
   const guids = Array.from(matchMeta.keys());
@@ -815,6 +852,7 @@ async function scrapeSeasonStats(
     debug.teamsSource = "dc_standings";
   }
   debug.teamsCount = teamCompetitors.length;
+  console.log(`[scrape] season=${targetSeasonId} teamsSource=${debug.teamsSource} teamsCount=${teamCompetitors.length} matchListLength=${matchList.length}`);
 
   // ── E0. Load game-3 / tiebreaker config ─────────────────────────────────────
   const g3CfgRows = await db.select().from(scoringConfig)
@@ -1050,6 +1088,7 @@ export async function runScrape(
     status: "success",
     playersUpdated: totalPlayersUpdated,
     matchesUpdated: totalMatchesUpdated,
+    debugJson: JSON.stringify(debug),
   });
 
   return {
