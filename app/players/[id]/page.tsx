@@ -5,6 +5,7 @@ import { eq, and, asc, desc, or, isNull, isNotNull } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import PhaseSelector from "@/components/PhaseSelector";
 import { formatShortDate } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
 
 export const revalidate = 86400;
 
@@ -333,7 +334,7 @@ export default async function PlayerPage({
                     <div className="shrink-0 text-right flex items-center gap-2">
                       {matchGuidMap.get(w.weekKey) && (
                         <a
-                          href={`https://recap.dartconnect.com/games/${matchGuidMap.get(w.weekKey)}`}
+                          href={dcRecapUrl(matchGuidMap.get(w.weekKey))}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="View on DartConnect"
@@ -496,7 +497,7 @@ export default async function PlayerPage({
                     <td className="px-2 py-1.5 text-center">
                       {matchGuidMap.get(w.weekKey) && (
                         <a
-                          href={`https://recap.dartconnect.com/games/${matchGuidMap.get(w.weekKey)}`}
+                          href={dcRecapUrl(matchGuidMap.get(w.weekKey))}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="View on DartConnect"

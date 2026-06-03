@@ -5,6 +5,7 @@ import { eq, and, or, gt, desc, asc } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import { formatShortDate } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
 
 export const revalidate = 86400;
 
@@ -345,7 +346,7 @@ export default async function StandingsPage({
                                 </span>
                                 {m.dcGuid && (
                                   <a
-                                    href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                    href={dcRecapUrl(m.dcGuid)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     aria-label="View on DartConnect"

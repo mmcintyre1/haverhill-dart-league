@@ -7,6 +7,7 @@ import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import VenueToggle from "@/components/VenueToggle";
 import { formatShortDate } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
 
 export const revalidate = 86400;
 
@@ -314,7 +315,7 @@ export default async function MatchesPage({
                                   <div className="flex items-center justify-center gap-1.5">
                                     {scored ? <span className="font-bold tabular-nums text-slate-200">{hs} – {as_}</span> : <span className="text-slate-600 text-xs">—</span>}
                                     {m.dcGuid && (
-                                      <a href={`https://recap.dartconnect.com/games/${m.dcGuid}`} target="_blank" rel="noopener noreferrer" aria-label="View on DartConnect" className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0">
+                                      <a href={dcRecapUrl(m.dcGuid)} target="_blank" rel="noopener noreferrer" aria-label="View on DartConnect" className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0">
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
                                       </a>
                                     )}
@@ -388,7 +389,7 @@ export default async function MatchesPage({
                                 )}
                                 {m.dcGuid && (
                                   <a
-                                    href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                    href={dcRecapUrl(m.dcGuid)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     aria-label="View on DartConnect"

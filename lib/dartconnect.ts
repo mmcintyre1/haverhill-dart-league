@@ -551,6 +551,11 @@ export async function fetchLeaderboard(
 /** Get CSRF cookies (exported for reuse across calls in a single scrape) */
 export { getCSRFCookies };
 
+/** URL for a DartConnect match recap page */
+export function dcRecapUrl(guid: string | null | undefined): string {
+  return `https://recap.dartconnect.com/matches/${guid ?? ""}`;
+}
+
 // ─── Venue scraping (my.dartconnect.com schedule page) ───────────────────────
 
 function cleanAddress(addr: string): string {

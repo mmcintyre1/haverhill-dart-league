@@ -5,6 +5,7 @@ import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
 import { eq, desc, asc, and, or, gt, isNotNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { formatShortDate } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
 
 export const dynamic = "force-dynamic";
 
@@ -230,7 +231,7 @@ export default async function HomePage() {
                       <span className="w-5 shrink-0 flex items-center justify-end">
                         {m.dcGuid && (
                           <a
-                            href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                            href={dcRecapUrl(m.dcGuid)}
                             target="_blank"
                             rel="noopener noreferrer"
                             aria-label="View on DartConnect"

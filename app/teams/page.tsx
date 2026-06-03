@@ -6,6 +6,7 @@ import { alias } from "drizzle-orm/pg-core";
 import SeasonSelector from "@/components/SeasonSelector";
 import { groupTeamSchedule, type ScheduleMatch } from "@/lib/schedule";
 import { formatShortDate, formatCaptainName } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
 
 export const revalidate = 86400;
 
@@ -309,7 +310,7 @@ export default async function TeamsPage({
                                           </span>
                                           {m.dcGuid && (
                                             <a
-                                              href={`https://recap.dartconnect.com/games/${m.dcGuid}`}
+                                              href={dcRecapUrl(m.dcGuid)}
                                               target="_blank"
                                               rel="noopener noreferrer"
                                               className="shrink-0 text-red-700 hover:text-red-500 transition-colors"
