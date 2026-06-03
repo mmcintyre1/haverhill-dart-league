@@ -864,9 +864,11 @@ async function scrapeSeasonStats(
   const postRoster: PlayerWithTeam[] = [];
   const postSeenPlayerIds = new Set<number>();
 
+  const postHistoryDebug: Record<string, number | string> = {};
   for (const team of teamCompetitors) {
     const teamId = String(team.id);
     const teamName = String(team.team_name ?? team.name ?? "");
+    // Roster fetch — failures here must not block history fetch
     try {
       const c = await getCSRFCookies();
       const res = await fetchPlayerStandings(targetSeasonId, { season_status: "POST", opponent_guid: teamId }, c);
@@ -877,8 +879,12 @@ async function scrapeSeasonStats(
           postRoster.push({ ...(p as DCPlayerStat), _teamName: teamName });
         }
       }
-      const c2 = await getCSRFCookies();
-      const history = await fetchTeamMatchHistory(targetSeasonId, teamId, c2, "POST");
+    } catch { /* non-fatal — continue to history */ }
+    // History fetch — separate try-catch so roster failures don't suppress GUID discovery
+    try {
+      const c = await getCSRFCookies();
+      const history = await fetchTeamMatchHistory(targetSeasonId, teamId, c, "POST");
+      postHistoryDebug[teamName] = history.length;
       for (const entry of history) {
         const guid = entry.match_id;
         if (!guid) continue;
@@ -894,10 +900,38 @@ async function scrapeSeasonStats(
           if (meta.awayTeamId === "__unknown__") meta.awayTeamId = teamId;
         }
       }
-    } catch { /* non-fatal per team */ }
+    } catch (e) {
+      postHistoryDebug[teamName] = `err: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }
 
+  // Also seed postMatchMeta with any POST match GUIDs already in the DB —
+  // catches cases where DC's standings API has a delay returning new match GUIDs
+  // (e.g. week 2 of a two-week playoff series) while keeping existing data in sync.
+  try {
+    const serialToDcId = new Map<number, number>();
+    for (const [dcId, serialId] of dcTeamToSerialId) serialToDcId.set(serialId, dcId);
+    const existingPostMatches = await db
+      .select({ dcGuid: matches.dcGuid, homeTeamId: matches.homeTeamId, awayTeamId: matches.awayTeamId, prettyDate: matches.prettyDate })
+      .from(matches)
+      .where(and(eq(matches.seasonId, targetSeasonId), eq(matches.seasonStatus, "POST")));
+    for (const m of existingPostMatches) {
+      if (!m.dcGuid) continue;
+      if (!postMatchMeta.has(m.dcGuid)) {
+        const homeDcId = m.homeTeamId ? String(serialToDcId.get(m.homeTeamId) ?? "__unknown__") : "__unknown__";
+        const awayDcId = m.awayTeamId ? String(serialToDcId.get(m.awayTeamId) ?? "__unknown__") : "__unknown__";
+        postMatchMeta.set(m.dcGuid, {
+          homeTeamId: homeDcId,
+          awayTeamId: awayDcId,
+          weekKey: m.prettyDate ?? "",
+        });
+      }
+    }
+    debug.postDbSeedCount = existingPostMatches.length;
+  } catch { /* non-fatal */ }
+
   debug.postMatchGuids = postMatchMeta.size;
+  debug.postHistoryPerTeam = postHistoryDebug;
 
   if (postMatchMeta.size > 0) {
     const postGuids = Array.from(postMatchMeta.keys());
