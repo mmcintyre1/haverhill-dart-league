@@ -594,11 +594,13 @@ async function scrapePhase(
 
     if (homeScore + awayScore === 0) continue;
 
-    // For REG: also update lineup-sourced rows that have team IDs but no dcGuid yet
+    // For REG: update scores on lineup-sourced rows (scores only — dcGuid is set
+    // by the GUID upsert below to avoid unique-constraint conflicts when the same
+    // two teams appear in both REG and POST, giving two rows with the same team pair).
     if (phase === "REG") {
       await db
         .update(matches)
-        .set({ homeScore, awayScore, ...(roundSeq != null ? { roundSeq } : {}), status: "C", dcGuid: guid, updatedAt: new Date() })
+        .set({ homeScore, awayScore, ...(roundSeq != null ? { roundSeq } : {}), status: "C", updatedAt: new Date() })
         .where(and(
           eq(matches.seasonId, targetSeasonId),
           eq(matches.homeTeamId, homeSerialId),
