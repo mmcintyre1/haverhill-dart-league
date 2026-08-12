@@ -78,6 +78,11 @@ function PostsTab({ secret }: { secret: string }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [posts, setPosts] = useState<NewsPost[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
 
   const headers = (extra?: Record<string, string>): Record<string, string> => ({
     "Content-Type": "application/json",
@@ -142,6 +147,35 @@ function PostsTab({ secret }: { secret: string }) {
     }
   }
 
+  function handleStartEdit(post: NewsPost) {
+    setEditingId(post.id);
+    setEditTitle(post.title);
+    setEditBody(post.body);
+    setEditAuthor(post.author ?? "");
+  }
+
+  function handleCancelEdit() {
+    setEditingId(null);
+  }
+
+  async function handleSaveEdit(id: number) {
+    setEditLoading(true);
+    try {
+      const res = await fetch("/api/admin/news", {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ id, title: editTitle, body: editBody, author: editAuthor || null }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setEditingId(null);
+      await loadPosts();
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setEditLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -189,36 +223,91 @@ function PostsTab({ secret }: { secret: string }) {
         <div>
           <h3 className="text-xs uppercase tracking-wider text-slate-400 mb-3">Existing Posts</h3>
           <div className="space-y-2">
-            {posts.map((post) => (
-              <div
-                key={post.id}
-                className={`rounded-lg border px-4 py-3 flex items-start justify-between gap-4 ${
-                  post.hidden ? "border-slate-700/50 bg-slate-900/40 opacity-60" : "border-slate-700 bg-slate-900"
-                }`}
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-200 truncate">{post.title}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {new Date(post.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                    {post.hidden && <span className="ml-2 text-rose-400">hidden</span>}
-                  </p>
+            {posts.map((post) =>
+              editingId === post.id ? (
+                <div key={post.id} className="rounded-lg border border-amber-700/50 bg-slate-900 px-4 py-3 space-y-3">
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Title *</label>
+                    <input
+                      required
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Body *</label>
+                    <textarea
+                      required
+                      rows={5}
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500 resize-y"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Author</label>
+                    <input
+                      value={editAuthor}
+                      onChange={(e) => setEditAuthor(e.target.value)}
+                      className="w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={handleCancelEdit}
+                      disabled={editLoading}
+                      className="px-2.5 py-1 rounded text-xs font-medium border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => handleSaveEdit(post.id)}
+                      disabled={editLoading || !editTitle || !editBody}
+                      className="px-3 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+                    >
+                      {editLoading ? "Saving…" : "Save"}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    onClick={() => handleToggleHidden(post)}
-                    className="px-2.5 py-1 rounded text-xs font-medium border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
-                  >
-                    {post.hidden ? "Show" : "Hide"}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(post.id)}
-                    className="px-2.5 py-1 rounded text-xs font-medium border border-rose-800 text-rose-400 hover:border-rose-600 hover:text-rose-300 transition-colors"
-                  >
-                    Delete
-                  </button>
+              ) : (
+                <div
+                  key={post.id}
+                  className={`rounded-lg border px-4 py-3 flex items-start justify-between gap-4 ${
+                    post.hidden ? "border-slate-700/50 bg-slate-900/40 opacity-60" : "border-slate-700 bg-slate-900"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-200 truncate">{post.title}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {new Date(post.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {post.hidden && <span className="ml-2 text-rose-400">hidden</span>}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={() => handleStartEdit(post)}
+                      className="px-2.5 py-1 rounded text-xs font-medium border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleToggleHidden(post)}
+                      className="px-2.5 py-1 rounded text-xs font-medium border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors"
+                    >
+                      {post.hidden ? "Show" : "Hide"}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(post.id)}
+                      className="px-2.5 py-1 rounded text-xs font-medium border border-rose-800 text-rose-400 hover:border-rose-600 hover:text-rose-300 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            )}
           </div>
         </div>
       )}

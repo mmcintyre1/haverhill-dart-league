@@ -44,19 +44,25 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: { id?: number; hidden?: boolean };
+  let body: { id?: number; hidden?: boolean; title?: string; body?: string; author?: string | null };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { id, hidden } = body;
-  if (!id || hidden === undefined) {
-    return NextResponse.json({ error: "id and hidden are required" }, { status: 400 });
+  const { id, hidden, title, body: postBody, author } = body;
+  if (!id || (hidden === undefined && title === undefined && postBody === undefined && author === undefined)) {
+    return NextResponse.json({ error: "id and at least one field to update are required" }, { status: 400 });
   }
 
-  await db.update(newsPosts).set({ hidden }).where(eq(newsPosts.id, id));
+  const updates: Partial<typeof newsPosts.$inferInsert> = {};
+  if (hidden !== undefined) updates.hidden = hidden;
+  if (title !== undefined) updates.title = title;
+  if (postBody !== undefined) updates.body = postBody;
+  if (author !== undefined) updates.author = author;
+
+  await db.update(newsPosts).set(updates).where(eq(newsPosts.id, id));
   revalidatePath("/", "layout");
   return NextResponse.json({ ok: true });
 }
