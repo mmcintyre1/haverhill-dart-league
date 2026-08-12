@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   // If ADMIN_PASSWORD is not configured (e.g. local dev without it set), allow through.

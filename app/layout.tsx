@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import NavLinks from "@/components/NavLinks";
@@ -15,13 +15,16 @@ const LEAGUE_NAME = process.env.LEAGUE_NAME ?? "Dart League";
 export const metadata: Metadata = {
   title: LEAGUE_NAME,
   description: `Stats, schedule, and results for the ${LEAGUE_NAME}`,
-  themeColor: "#f59e0b",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "HDL Stats",
   },
   icons: { apple: "/icons/icon-192.png" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#f59e0b",
 };
 
 export default function RootLayout({
