@@ -19,6 +19,7 @@ export const seasons = pgTable("seasons", {
   name: text("name").notNull(), // e.g. "Spring 2026"
   startDate: date("start_date"),
   isActive: boolean("is_active").notNull().default(false),
+  visible: boolean("visible").notNull().default(true), // public site visibility; admin-controlled only, never set by the scraper on conflict
   lastScrapedAt: timestamp("last_scraped_at"),
 });
 

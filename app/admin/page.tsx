@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const allSeasons = await db
-    .select({ id: seasons.id, name: seasons.name, isActive: seasons.isActive, lastScrapedAt: seasons.lastScrapedAt })
+    .select({ id: seasons.id, name: seasons.name, isActive: seasons.isActive, visible: seasons.visible, lastScrapedAt: seasons.lastScrapedAt })
     .from(seasons)
     .orderBy(desc(seasons.startDate));
 

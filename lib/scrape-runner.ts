@@ -880,15 +880,17 @@ async function scrapeSeasonStats(
   const dateToRoundSeq = new Map<string, number>();
 
   for (const m of matchList) {
+    // DC leaves `division` null until the season is fully published for export —
+    // fall back to a placeholder so unpublished seasons still scrape; self-corrects
+    // to the real name once DC publishes it on a later scrape. Bare ID (not prefixed
+    // with "Division") since the UI already labels these as "Division {name}".
+    const divName = m.division_id != null ? (m.division ?? String(m.division_id)) : m.division;
+
     let divSerialId: number | null = null;
     if (m.division_id != null) {
       if (divSerialIdByDcId.has(m.division_id)) {
         divSerialId = divSerialIdByDcId.get(m.division_id)!;
       } else {
-        // DC leaves `division` null until the season is fully published for export —
-        // fall back to a placeholder so unpublished seasons still scrape; self-corrects
-        // to the real name once DC publishes it on a later scrape.
-        const divName = m.division ?? `Division ${m.division_id}`;
         const [divRow] = await db
           .insert(divisions)
           .values({ dcId: m.division_id, seasonId: targetSeasonId, name: divName })
@@ -929,8 +931,8 @@ async function scrapeSeasonStats(
 
     await db
       .insert(matches)
-      .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: m.division, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, seasonStatus: m.season_status, prettyDate: m.pretty_date })
-      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, updatedAt: new Date() } });
+      .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, seasonStatus: m.season_status, prettyDate: m.pretty_date })
+      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, divisionName: divName, updatedAt: new Date() } });
     matchesUpdated++;
   }
 
@@ -1038,6 +1040,10 @@ export async function runScrape(
         name: s.season,
         startDate: s.start_date,
         isActive: pageProps.activeSeasons.some((a) => a.id === s.id),
+        // New seasons start hidden from the public site until an admin explicitly
+        // publishes them (e.g. once DC's own export is ready) — never overwritten
+        // on conflict, so this only applies the first time a season is discovered.
+        visible: false,
       })
       .onConflictDoUpdate({
         target: seasons.id,

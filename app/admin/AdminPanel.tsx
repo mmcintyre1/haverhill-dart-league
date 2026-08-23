@@ -6,6 +6,7 @@ type Season = {
   id: number;
   name: string;
   isActive: boolean;
+  visible: boolean;
   lastScrapedAt: Date | null;
 };
 
@@ -324,6 +325,26 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
   const [seasonId, setSeasonId] = useState<number>(seasons[0]?.id ?? 0);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  const [seasonList, setSeasonList] = useState<Season[]>(seasons);
+  const [visibilityResult, setVisibilityResult] = useState<Result | null>(null);
+
+  async function handleToggleVisible(season: Season) {
+    const nextVisible = !season.visible;
+    try {
+      const res = await fetch("/api/admin/seasons", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+        },
+        body: JSON.stringify({ id: season.id, visible: nextVisible }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setSeasonList((prev) => prev.map((s) => (s.id === season.id ? { ...s, visible: nextVisible } : s)));
+    } catch (e) {
+      setVisibilityResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   async function handleRefresh(e: React.FormEvent) {
     e.preventDefault();
@@ -416,6 +437,7 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
   ];
 
   return (
+    <div className="space-y-10">
     <form onSubmit={handleRefresh} className="space-y-5">
       <div>
         <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Mode</label>
@@ -470,6 +492,38 @@ function RefreshTab({ seasons, secret }: { seasons: Season[]; secret: string }) 
 
       {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
     </form>
+
+    <div>
+      <h3 className="text-xs uppercase tracking-wider text-slate-400 mb-3">Season Visibility</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        New seasons start hidden from the public site. Publish once ready — e.g. once DartConnect's own export is finished.
+      </p>
+      <div className="space-y-2">
+        {seasonList.map((s) => (
+          <div
+            key={s.id}
+            className={`rounded-lg border px-4 py-3 flex items-center justify-between gap-4 ${
+              s.visible ? "border-slate-700 bg-slate-900" : "border-slate-700/50 bg-slate-900/40 opacity-60"
+            }`}
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-200 truncate">
+                {s.name}{s.isActive ? " (active)" : ""}
+              </p>
+              {!s.visible && <p className="text-xs text-rose-400 mt-0.5">hidden from public site</p>}
+            </div>
+            <button
+              onClick={() => handleToggleVisible(s)}
+              className="px-2.5 py-1 rounded text-xs font-medium border border-slate-600 text-slate-300 hover:border-slate-500 hover:text-white transition-colors shrink-0"
+            >
+              {s.visible ? "Hide" : "Publish"}
+            </button>
+          </div>
+        ))}
+      </div>
+      {visibilityResult && <ResultBanner result={visibilityResult} onDismiss={() => setVisibilityResult(null)} />}
+    </div>
+    </div>
   );
 }
 

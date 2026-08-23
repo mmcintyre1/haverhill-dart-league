@@ -10,12 +10,15 @@ import { dcRecapUrl } from "@/lib/dartconnect";
 export const revalidate = 86400;
 
 async function getActiveSeason() {
-  const [s] = await db
+  // Prefer the current active season, but only if it's publicly visible — a
+  // season hidden pending publish shouldn't blank out the homepage. Fall back
+  // to the most recent visible season otherwise (mirrors the other pages).
+  const visibleSeasons = await db
     .select()
     .from(seasons)
-    .where(eq(seasons.isActive, true))
-    .limit(1);
-  return s ?? null;
+    .where(eq(seasons.visible, true))
+    .orderBy(desc(seasons.startDate));
+  return visibleSeasons.find((s) => s.isActive) ?? visibleSeasons[0] ?? null;
 }
 
 async function getNews() {

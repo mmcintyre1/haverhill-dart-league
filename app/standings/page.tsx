@@ -10,7 +10,7 @@ import { dcRecapUrl } from "@/lib/dartconnect";
 export const revalidate = 86400;
 
 async function getSeasons() {
-  return db.select().from(seasons).orderBy(desc(seasons.startDate));
+  return db.select().from(seasons).where(eq(seasons.visible, true)).orderBy(desc(seasons.startDate));
 }
 
 async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
@@ -214,10 +214,10 @@ export default async function StandingsPage({
   const params = await searchParams;
   const allSeasons = await getSeasons();
 
-  const activeId =
-    params.season
-      ? parseInt(params.season)
-      : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
+  const requestedId = params.season ? parseInt(params.season) : NaN;
+  const activeId = allSeasons.some((s) => s.id === requestedId)
+    ? requestedId
+    : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
 
   const divisionFilter = params.division ?? null;
 

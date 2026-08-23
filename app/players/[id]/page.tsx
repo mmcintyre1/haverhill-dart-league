@@ -14,8 +14,21 @@ export async function generateStaticParams() {
   return rows.map((p) => ({ id: String(p.id) }));
 }
 
-async function getSeasons() {
-  return db.select().from(seasons).orderBy(desc(seasons.startDate));
+async function getSeasons(playerId: number) {
+  return db
+    .selectDistinct({
+      id: seasons.id,
+      leagueId: seasons.leagueId,
+      name: seasons.name,
+      startDate: seasons.startDate,
+      isActive: seasons.isActive,
+      visible: seasons.visible,
+      lastScrapedAt: seasons.lastScrapedAt,
+    })
+    .from(seasons)
+    .innerJoin(playerStats, eq(playerStats.seasonId, seasons.id))
+    .where(and(eq(seasons.visible, true), eq(playerStats.playerId, playerId)))
+    .orderBy(desc(seasons.startDate));
 }
 
 async function getPlayerHeader(playerId: number, seasonId: number, phase: string) {
@@ -185,9 +198,10 @@ export default async function PlayerPage({
     return <div className="text-slate-400 py-16 text-center">Player not found.</div>;
   }
 
-  const allSeasons = await getSeasons();
-  const activeId = sp.season
-    ? parseInt(sp.season)
+  const allSeasons = await getSeasons(playerId);
+  const requestedId = sp.season ? parseInt(sp.season) : NaN;
+  const activeId = allSeasons.some((s) => s.id === requestedId)
+    ? requestedId
     : allSeasons.find((s) => s.isActive)?.id ?? allSeasons[0]?.id;
   const phase = sp.phase ?? "REG";
 
