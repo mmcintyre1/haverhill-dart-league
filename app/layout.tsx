@@ -1,8 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import NavLinks from "@/components/NavLinks";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
+
+const GA_MEASUREMENT_ID = "G-FMK3T154WY";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -35,6 +38,13 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="min-h-screen bg-[#0a0f1e] text-slate-200 antialiased">
+        <Script src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`} strategy="afterInteractive" />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', '${GA_MEASUREMENT_ID}');`}
+        </Script>
         <ServiceWorkerRegistrar />
         <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0 z-10 relative">
           {/* Amber accent line */}
