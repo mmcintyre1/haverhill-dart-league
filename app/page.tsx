@@ -7,7 +7,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { formatShortDate } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 86400;
 
 async function getActiveSeason() {
   const [s] = await db
