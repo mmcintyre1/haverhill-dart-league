@@ -110,7 +110,11 @@ export default async function HomePage() {
               </h1>
               <p className="text-slate-400 text-base">
                 {season
-                  ? `${season.name} is underway. Follow standings, results, and player stats all season long.`
+                  ? nextRound
+                    ? `${season.name} is underway. Follow standings, results, and player stats all season long.`
+                    : lastRound
+                    ? `The ${season.name} season has wrapped up. Browse final standings, results, and player stats.`
+                    : `${season.name} is set — schedule and stats will appear here once play begins.`
                   : "Stats, schedules, and results for every week of the season."}
               </p>
             </div>
