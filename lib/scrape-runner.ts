@@ -885,10 +885,14 @@ async function scrapeSeasonStats(
       if (divSerialIdByDcId.has(m.division_id)) {
         divSerialId = divSerialIdByDcId.get(m.division_id)!;
       } else {
+        // DC leaves `division` null until the season is fully published for export —
+        // fall back to a placeholder so unpublished seasons still scrape; self-corrects
+        // to the real name once DC publishes it on a later scrape.
+        const divName = m.division ?? `Division ${m.division_id}`;
         const [divRow] = await db
           .insert(divisions)
-          .values({ dcId: m.division_id, seasonId: targetSeasonId, name: m.division })
-          .onConflictDoUpdate({ target: [divisions.dcId, divisions.seasonId], set: { name: m.division } })
+          .values({ dcId: m.division_id, seasonId: targetSeasonId, name: divName })
+          .onConflictDoUpdate({ target: [divisions.dcId, divisions.seasonId], set: { name: divName } })
           .returning({ id: divisions.id });
         divSerialId = divRow?.id ?? null;
         if (divSerialId != null) divSerialIdByDcId.set(m.division_id, divSerialId);
