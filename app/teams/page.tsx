@@ -252,29 +252,34 @@ export default async function TeamsPage({
                                     <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open/sched:rotate-90 inline-block">▸</span>
                                     <span className="text-xs font-medium text-slate-400">Upcoming ({upcoming.length})</span>
                                   </summary>
-                                  <div className="mt-1.5 space-y-1">
-                                    {upcoming.map((m) => {
+                                  <div className="mt-2 rounded-lg border border-slate-800 overflow-hidden">
+                                    {upcoming.map((m, i) => {
                                       const isHome = m.homeTeamId === team.teamId;
                                       const opponent = isHome ? m.awayTeamName : m.homeTeamName;
                                       const venue = isHome ? team.venueName : m.homeVenueName;
                                       return (
-                                        <div key={m.id} className="flex items-center gap-2 text-xs text-slate-300">
-                                          <span className="w-20 shrink-0 whitespace-nowrap text-slate-500">
+                                        <div
+                                          key={m.id}
+                                          className={`flex items-start sm:items-center gap-2 sm:gap-3 px-3 py-2 text-xs sm:text-sm text-slate-300 ${i % 2 === 1 ? "bg-slate-800/30" : ""} ${i > 0 ? "border-t border-slate-800/60" : ""}`}
+                                        >
+                                          <span className="w-20 sm:w-24 shrink-0 whitespace-nowrap text-slate-500 pt-0.5 sm:pt-0">
                                             {formatShortDate(m.schedDate)}
                                           </span>
-                                          <span className={`shrink-0 px-1 py-0.5 rounded text-[0.6rem] font-semibold uppercase ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
+                                          <span className={`shrink-0 w-12 sm:w-14 text-center px-1 py-0.5 rounded text-[0.6rem] sm:text-[0.65rem] font-semibold uppercase mt-0.5 sm:mt-0 ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
                                             {isHome ? "Home" : "Away"}
                                           </span>
-                                          <span className="truncate">{opponent}</span>
-                                          {venue && (
-                                            <span className="hidden sm:flex items-center gap-0.5 text-slate-600 truncate">
-                                              <svg width="7" height="9" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                                                <path d="M12 2C7.58 2 4 5.58 4 10c0 6.5 8 16 8 16s8-9.5 8-16c0-4.42-3.58-8-8-8z"/>
-                                                <circle cx="12" cy="10" r="3"/>
-                                              </svg>
-                                              {venue}
-                                            </span>
-                                          )}
+                                          <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center">
+                                            <span className={`truncate font-medium ${opponent ? "" : "text-slate-600 italic"}`}>{opponent || "BYE"}</span>
+                                            {venue && opponent && (
+                                              <span className="flex items-center gap-1 text-slate-600 truncate text-[11px] sm:text-xs sm:ml-auto sm:pl-4">
+                                                <svg width="8" height="10" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                                                  <path d="M12 2C7.58 2 4 5.58 4 10c0 6.5 8 16 8 16s8-9.5 8-16c0-4.42-3.58-8-8-8z"/>
+                                                  <circle cx="12" cy="10" r="3"/>
+                                                </svg>
+                                                {venue}
+                                              </span>
+                                            )}
+                                          </div>
                                         </div>
                                       );
                                     })}
@@ -289,25 +294,30 @@ export default async function TeamsPage({
                                     <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open/sched:rotate-90 inline-block">▸</span>
                                     <span className="text-xs font-medium text-slate-400">Past ({past.length})</span>
                                   </summary>
-                                  <div className="mt-1.5 space-y-1">
-                                    {past.map((m) => {
+                                  <div className="mt-2 rounded-lg border border-slate-800 overflow-hidden">
+                                    {past.map((m, i) => {
                                       const isHome = m.homeTeamId === team.teamId;
                                       const opponent = isHome ? m.awayTeamName : m.homeTeamName;
                                       const teamScore = isHome ? m.homeScore : m.awayScore;
                                       const oppScore = isHome ? m.awayScore : m.homeScore;
                                       const won = teamScore > oppScore;
                                       return (
-                                        <div key={m.id} className="flex items-center gap-2 text-xs text-slate-400">
-                                          <span className="w-20 shrink-0 whitespace-nowrap text-slate-500">
+                                        <div
+                                          key={m.id}
+                                          className={`flex items-center gap-2 sm:gap-3 px-3 py-2 text-xs sm:text-sm text-slate-400 ${i % 2 === 1 ? "bg-slate-800/30" : ""} ${i > 0 ? "border-t border-slate-800/60" : ""}`}
+                                        >
+                                          <span className="w-20 sm:w-24 shrink-0 whitespace-nowrap text-slate-500">
                                             {formatShortDate(m.schedDate)}
                                           </span>
-                                          <span className={`shrink-0 px-1 py-0.5 rounded text-[0.6rem] font-semibold uppercase ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
+                                          <span className={`shrink-0 w-12 sm:w-14 text-center px-1 py-0.5 rounded text-[0.6rem] sm:text-[0.65rem] font-semibold uppercase ${isHome ? "bg-sky-900/50 text-sky-400" : "bg-slate-700/60 text-slate-400"}`}>
                                             {isHome ? "Home" : "Away"}
                                           </span>
-                                          <span className="truncate flex-1">{opponent}</span>
-                                          <span className={`shrink-0 font-semibold tabular-nums ${won ? "text-emerald-400" : "text-rose-400"}`}>
-                                            {teamScore}–{oppScore}
-                                          </span>
+                                          <span className={`truncate flex-1 ${opponent ? "" : "text-slate-600 italic"}`}>{opponent || "BYE"}</span>
+                                          {opponent && (
+                                            <span className={`shrink-0 font-semibold tabular-nums ${won ? "text-emerald-400" : "text-rose-400"}`}>
+                                              {teamScore}–{oppScore}
+                                            </span>
+                                          )}
                                           {m.dcGuid && (
                                             <a
                                               href={dcRecapUrl(m.dcGuid)}
