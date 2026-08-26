@@ -2,7 +2,7 @@ import Link from "next/link";
 import VenueToggle from "@/components/VenueToggle";
 import NewsCarousel from "@/components/NewsCarousel";
 import { db, seasons, matches, newsPosts, teams } from "@/lib/db";
-import { eq, desc, asc, and, or, gt, isNotNull, ne } from "drizzle-orm";
+import { eq, desc, asc, and, or, gt, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { formatShortDate } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
@@ -49,14 +49,25 @@ async function getNextRound(seasonId: number) {
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
     .where(and(eq(matches.seasonId, seasonId), eq(matches.status, "P")))
     .orderBy(asc(matches.schedDate), asc(matches.roundSeq))
-    .limit(20);
+    .limit(40);
 
   if (pending.length === 0) return null;
   const nextDate = pending[0].schedDate ?? null;
+  const nextMatches = pending.filter((m) => m.schedDate === nextDate);
+
+  const byDivision = new Map<string, typeof nextMatches>();
+  for (const m of nextMatches) {
+    const key = m.divisionName ?? "";
+    if (!byDivision.has(key)) byDivision.set(key, []);
+    byDivision.get(key)!.push(m);
+  }
+
   return {
     round: pending[0].roundSeq,
     schedDate: nextDate,
-    matches: pending.filter((m) => m.schedDate === nextDate),
+    divisions: [...byDivision.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([divisionName, divMatches]) => ({ divisionName, matches: divMatches })),
   };
 }
 
@@ -171,28 +182,36 @@ export default async function HomePage() {
                 </span>
               </div>
               <div className="divide-y divide-slate-800">
-                {nextRound.matches.map((m) => (
-                  <div
-                    key={m.id}
-                    className="px-3 py-2.5 flex items-center text-sm"
-                  >
-                    <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName}</span>
-                    <span className="flex-1 min-w-0 text-slate-200 font-medium text-right truncate pr-1">
-                      {m.awayTeamName}
-                    </span>
-                    <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
-                    <span className="flex-1 min-w-0 text-slate-200 font-medium truncate pl-1">
-                      {m.homeTeamName}
-                    </span>
-                    <div className="hidden lg:block w-40 shrink-0 ml-2 pl-2 border-l border-slate-700/60 min-w-0">
-                      {m.homeTeamVenueName && (
-                        <VenueToggle
-                          name={m.homeTeamVenueName}
-                          address={m.homeTeamVenueAddress}
-                          phone={m.homeTeamVenuePhone}
-                          showCity={false}
-                        />
-                      )}
+                {nextRound.divisions.map((d) => (
+                  <div key={d.divisionName}>
+                    <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      {d.divisionName || "—"}
+                    </div>
+                    <div className="divide-y divide-slate-800/60">
+                      {d.matches.map((m) => (
+                        <div
+                          key={m.id}
+                          className="px-3 py-2 flex items-center text-sm"
+                        >
+                          <span className={`flex-1 min-w-0 font-medium text-right truncate pr-1 ${m.awayTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                            {m.awayTeamName || "BYE"}
+                          </span>
+                          <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                          <span className={`flex-1 min-w-0 font-medium truncate pl-1 ${m.homeTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                            {m.homeTeamName || "BYE"}
+                          </span>
+                          <div className="hidden lg:block w-40 shrink-0 ml-2 pl-2 border-l border-slate-700/60 min-w-0">
+                            {m.homeTeamVenueName && (
+                              <VenueToggle
+                                name={m.homeTeamVenueName}
+                                address={m.homeTeamVenueAddress}
+                                phone={m.homeTeamVenuePhone}
+                                showCity={false}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}

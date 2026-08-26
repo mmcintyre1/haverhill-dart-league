@@ -51,7 +51,7 @@ async function getAllMatches(seasonId: number) {
     .from(matches)
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
     .where(eq(matches.seasonId, seasonId))
-    .orderBy(asc(matches.roundSeq), asc(matches.schedDate), asc(matches.schedTime));
+    .orderBy(asc(matches.roundSeq), asc(matches.divisionName), asc(matches.schedDate), asc(matches.schedTime));
 }
 
 function formatTime(t: string | null) {
@@ -193,14 +193,14 @@ export default async function MatchesPage({
                         {/* Division badge */}
                         <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
                         {/* Away team — capped width, right-aligned into the @ */}
-                        <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium text-right truncate pr-1">
-                          {m.awayTeamName}
+                        <span className={`flex-1 min-w-0 max-w-[220px] font-medium text-right truncate pr-1 ${m.awayTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                          {m.awayTeamName || "BYE"}
                         </span>
                         {/* @ separator */}
                         <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
                         {/* Home team — capped width, left-aligned away from the @ */}
-                        <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium truncate pl-1">
-                          {m.homeTeamName}
+                        <span className={`flex-1 min-w-0 max-w-[220px] font-medium truncate pl-1 ${m.homeTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                          {m.homeTeamName || "BYE"}
                         </span>
                         {/* Venue — flex-1 so it absorbs leftover space from capped team columns */}
                         <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
@@ -243,9 +243,9 @@ export default async function MatchesPage({
                         {ms.map((m) => (
                           <div key={m.id} className="bg-slate-900 hover:bg-slate-800/60 transition-colors px-4 py-2.5 flex items-center text-sm">
                             <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
-                            <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium text-right truncate pr-1">{m.awayTeamName}</span>
+                            <span className={`flex-1 min-w-0 max-w-[220px] font-medium text-right truncate pr-1 ${m.awayTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>{m.awayTeamName || "BYE"}</span>
                             <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
-                            <span className="flex-1 min-w-0 max-w-[220px] text-slate-200 font-medium truncate pl-1">{m.homeTeamName}</span>
+                            <span className={`flex-1 min-w-0 max-w-[220px] font-medium truncate pl-1 ${m.homeTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>{m.homeTeamName || "BYE"}</span>
                             <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
                               {m.homeTeamVenueName && (
                                 <VenueToggle name={m.homeTeamVenueName} address={m.homeTeamVenueAddress} phone={m.homeTeamVenuePhone} />
