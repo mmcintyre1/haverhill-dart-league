@@ -336,20 +336,33 @@ export default async function TeamsPage({
                           </div>
                         )}
 
-                        {/* Roster grid */}
+                        {/* Roster */}
                         {team.players.length > 0 && (
                           <div>
                             <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-2">Roster</p>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5">
-                              {team.players.map((p) => (
-                                <Link
-                                  key={p.id}
-                                  href={`/players/${p.id}?season=${activeId}`}
-                                  className="text-sm text-slate-300 hover:text-amber-400 transition-colors truncate"
-                                >
-                                  {p.name}
-                                </Link>
-                              ))}
+                            <div className="flex flex-wrap gap-1.5">
+                              {team.players.map((p) => {
+                                const isCaptain =
+                                  formatCaptainName(team.captain)?.toLowerCase() === p.name.toLowerCase();
+                                return (
+                                  <Link
+                                    key={p.id}
+                                    href={`/players/${p.id}?season=${activeId}`}
+                                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors ${
+                                      isCaptain
+                                        ? "border-amber-700/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                                        : "border-slate-700/60 bg-slate-800/50 text-slate-300 hover:border-slate-600 hover:bg-slate-800 hover:text-amber-400"
+                                    }`}
+                                  >
+                                    {isCaptain && (
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
+                                        <path d="M12 2l2.9 6.26 6.9.6-5.2 4.53 1.57 6.75L12 16.9l-6.17 3.24 1.57-6.75-5.2-4.53 6.9-.6z" />
+                                      </svg>
+                                    )}
+                                    {p.name}
+                                  </Link>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
