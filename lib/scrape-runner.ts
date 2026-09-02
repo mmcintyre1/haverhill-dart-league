@@ -1,6 +1,6 @@
 import { eq, and, inArray } from "drizzle-orm";
 import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig } from "./db";
-import { parseCricketNotable, gameType, setWinner, guidToFakeId } from "./scrape-utils";
+import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
 import {
   fetchLeaguePageProps,
@@ -878,6 +878,14 @@ async function scrapeSeasonStats(
   const divSerialIdByDcId = new Map<number, number>();
   const dcTeamToSerialId = new Map<number, number>();
   const dateToRoundSeq = new Map<string, number>();
+  const matchUpsertErrors: string[] = [];
+  // DC has been observed reusing a league_match_id between an aborted/restarted
+  // match and an unrelated future fixture, which leaks a real score onto a game
+  // that hasn't been played yet. A match reported complete for a date more than
+  // a few days out is untrustworthy — treat it as still pending instead.
+  const futureCutoff = new Date();
+  futureCutoff.setDate(futureCutoff.getDate() + 3);
+  const futureCutoffStr = futureCutoff.toISOString().slice(0, 10);
 
   for (const m of matchList) {
     // DC leaves `division` null until the season is fully published for export —
@@ -929,12 +937,37 @@ async function scrapeSeasonStats(
 
     if (!m.id) { matchesUpdated++; continue; }
 
-    await db
-      .insert(matches)
-      .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, seasonStatus: m.season_status, prettyDate: m.pretty_date })
-      .onConflictDoUpdate({ target: matches.id, set: { status: m.status, homeScore: m.home_score ?? 0, awayScore: m.away_score ?? 0, dcMatchId: m.dc_match_id ?? null, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, divisionName: divName, updatedAt: new Date() } });
-    matchesUpdated++;
+    const { dcMatchId } = parseDcMatchId(m.dc_match_id);
+
+    let status = m.status;
+    let homeScore = m.home_score ?? 0;
+    let awayScore = m.away_score ?? 0;
+    if (status !== "P" && m.sched_date && m.sched_date > futureCutoffStr) {
+      matchUpsertErrors.push(`match ${m.id}: suspicious result (status=${status}, score=${homeScore}-${awayScore}) for future date ${m.sched_date} — kept pending`);
+      status = "P";
+      homeScore = 0;
+      awayScore = 0;
+    }
+
+    // NOTE: dcGuid is intentionally NOT set here. It's captured separately by
+    // the GUID-based upsert below (ON CONFLICT dc_guid), which can safely
+    // resolve a conflict on that column. This insert's conflict target is
+    // matches.id, which cannot also absorb a dc_guid collision — attempting
+    // to set dcGuid here creates a duplicate row (real id row + synthetic
+    // guid row) once that guid is already owned by another row's id.
+    try {
+      await db
+        .insert(matches)
+        .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status, homeScore, awayScore, dcMatchId, seasonStatus: m.season_status, prettyDate: m.pretty_date })
+        .onConflictDoUpdate({ target: matches.id, set: { status, homeScore, awayScore, dcMatchId, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, divisionName: divName, updatedAt: new Date() } });
+      matchesUpdated++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      matchUpsertErrors.push(`match ${m.id}: ${msg}`);
+      console.log(`[scrape] match upsert id=${m.id} ERROR: ${msg}`);
+    }
   }
+  if (matchUpsertErrors.length > 0) debug.matchUpsertErrors = matchUpsertErrors;
 
   // If lineups empty, load dcTeamToSerialId from DB
   if (matchList.length === 0 && teamCompetitors.length > 0) {

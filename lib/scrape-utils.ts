@@ -32,6 +32,20 @@ export function setWinner(legs: DCGameLeg[]): 0 | 1 | null {
   return null;
 }
 
+/** DC's lineups `dc_match_id` field is historically a small integer, but as of
+ *  Fall 2026 DC sends the recap hex GUID there instead once a match is played
+ *  (confirmed: that value resolves at recap.dartconnect.com/matches/{guid}).
+ *  Route each shape to the column it actually fits — `dcMatchId` is integer,
+ *  `dcGuid` is the unique-indexed recap identifier also set later from match
+ *  history — so we capture the identifier either way instead of dropping it. */
+export function parseDcMatchId(id: number | string | null | undefined): { dcMatchId: number | null; dcGuid: string | null } {
+  if (id == null) return { dcMatchId: null, dcGuid: null };
+  if (typeof id === "number") return Number.isInteger(id) ? { dcMatchId: id, dcGuid: null } : { dcMatchId: null, dcGuid: null };
+  if (/^\d+$/.test(id)) return { dcMatchId: Number(id), dcGuid: null };
+  if (/^[0-9a-f]{16,32}$/i.test(id)) return { dcMatchId: null, dcGuid: id };
+  return { dcMatchId: null, dcGuid: null };
+}
+
 export function guidToFakeId(guid: string): number {
   let h = 0;
   for (const c of guid) {
