@@ -1,5 +1,5 @@
 import { eq, and, inArray } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig } from "./db";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments } from "./db";
 import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
 import {
@@ -15,6 +15,7 @@ import {
   fetchLeaderboard,
   fetchTeamVenues,
   getCSRFCookies,
+  decodeHtmlEntities,
   type DCMatch,
   type DCPlayerStat,
   type DCGameLeg,
@@ -115,6 +116,18 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     opponentNames: [],
     weekStats: new Map(),
   };
+}
+
+/** Record a data-quality issue for admin review. Deduped on (matchId, type,
+ *  message) so re-scraping the same match doesn't spam duplicate alerts. */
+async function raiseAlert(
+  seasonId: number, matchId: number | null, type: string, message: string,
+  dcGuid?: string | null, dcGuid2?: string | null
+) {
+  await db
+    .insert(adminAlerts)
+    .values({ seasonId, matchId, type, message, dcGuid: dcGuid ?? null, dcGuid2: dcGuid2 ?? null })
+    .onConflictDoNothing({ target: [adminAlerts.matchId, adminAlerts.type, adminAlerts.message] });
 }
 
 async function backfillArchivedMetadata(
@@ -399,6 +412,12 @@ async function scrapePhase(
     const { homeTeamId, awayTeamId, weekKey } = meta;
     const homeTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === homeTeamId)));
     const awayTeamName = String((t => t?.team_name ?? t?.name ?? "")(teamCompetitors.find((t) => String(t.id) === awayTeamId)));
+    const matchHomePlayers = new Set<string>();
+    const matchAwayPlayers = new Set<string>();
+    // Each player may appear in at most one set per game type (0 or 1 times) —
+    // legs within a single best-of-3 set naturally repeat the same players,
+    // so this counts distinct SETS per (player, game type), not legs.
+    const gameTypeSetsByPlayer = new Map<string, Map<string, number>>();
 
     for (const legs of sets) {
       if (legs.length === 0) continue;
@@ -412,6 +431,13 @@ async function scrapePhase(
           if (turn.home?.name) homePlayers.add(turn.home.name);
           if (turn.away?.name) awayPlayers.add(turn.away.name);
         }
+      }
+      for (const p of homePlayers) matchHomePlayers.add(p);
+      for (const p of awayPlayers) matchAwayPlayers.add(p);
+      if (!gameTypeSetsByPlayer.has(type)) gameTypeSetsByPlayer.set(type, new Map());
+      const typeCounts = gameTypeSetsByPlayer.get(type)!;
+      for (const p of new Set([...homePlayers, ...awayPlayers])) {
+        typeCounts.set(p, (typeCounts.get(p) ?? 0) + 1);
       }
 
       function awardSet(
@@ -503,6 +529,37 @@ async function scrapePhase(
           }
         }
       }
+
+      const alertMatchId = matchDataMap.get(guid)?.matchInfo?.league_match_id ?? null;
+
+      // A player can't legitimately appear for both teams in one match — this
+      // is always a DC lineup entry mistake (wrong name assigned to a slot),
+      // not a legal play scenario, so we can flag it with full confidence.
+      const bothSidesPlayers = [...matchHomePlayers].filter((p) => matchAwayPlayers.has(p));
+      if (bothSidesPlayers.length > 0) {
+        await raiseAlert(
+          targetSeasonId, alertMatchId, "player_both_sides",
+          `${homeTeamName} vs ${awayTeamName}: ${bothSidesPlayers.join(", ")} ${bothSidesPlayers.length === 1 ? "is" : "are"} listed playing for both teams — almost certainly a lineup mix-up in DC, not a real result.`,
+          guid
+        );
+      }
+
+      // A player may play at most one set of a given game type per match
+      // (cricket, 601, 501 — 0 or 1 times each, never two separate sets).
+      const gameTypeDisplay: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
+      const repeatOffenders: string[] = [];
+      for (const [type, playerCounts] of gameTypeSetsByPlayer) {
+        for (const [player, count] of playerCounts) {
+          if (count > 1) repeatOffenders.push(`${player} (${gameTypeDisplay[type] ?? type} x${count})`);
+        }
+      }
+      if (repeatOffenders.length > 0) {
+        await raiseAlert(
+          targetSeasonId, alertMatchId, "player_repeat_game_type",
+          `${homeTeamName} vs ${awayTeamName}: ${repeatOffenders.join(", ")} played more than one set of the same game type — should be 0 or 1 per game type. Check the lineup in DC.`,
+          guid
+        );
+      }
     }
   }
 
@@ -535,6 +592,49 @@ async function scrapePhase(
     }
   }
 
+  // ── F2. Apply manual stat adjustments (e.g. singles forfeits DC doesn't
+  //        attribute to a player) — merged before SOS so it factors into
+  //        both the adjusted player's own record and opponents' SOS inputs.
+  const adjustments = await db
+    .select({
+      playerName: players.name,
+      teamName: playerSeasonTeams.teamName,
+      gameType: playerStatAdjustments.gameType,
+      winsDelta: playerStatAdjustments.winsDelta,
+      lossesDelta: playerStatAdjustments.lossesDelta,
+      weekKey: playerStatAdjustments.weekKey,
+    })
+    .from(playerStatAdjustments)
+    .innerJoin(players, eq(players.id, playerStatAdjustments.playerId))
+    .leftJoin(playerSeasonTeams, and(
+      eq(playerSeasonTeams.playerId, playerStatAdjustments.playerId),
+      eq(playerSeasonTeams.seasonId, playerStatAdjustments.seasonId)
+    ))
+    .where(and(eq(playerStatAdjustments.seasonId, targetSeasonId), eq(playerStatAdjustments.phase, phase)));
+
+  for (const adj of adjustments) {
+    if (!accumByName.has(adj.playerName)) {
+      accumByName.set(adj.playerName, emptyAccum("", adj.playerName, adj.teamName ?? ""));
+    }
+    const acc = accumByName.get(adj.playerName)!;
+    acc.setWins += adj.winsDelta;
+    acc.setLosses += adj.lossesDelta;
+    if (adj.gameType === "crkt") { acc.crktWins += adj.winsDelta; acc.crktLosses += adj.lossesDelta; }
+    else if (adj.gameType === "601") { acc.col601Wins += adj.winsDelta; acc.col601Losses += adj.lossesDelta; }
+    else if (adj.gameType === "501") { acc.col501Wins += adj.winsDelta; acc.col501Losses += adj.lossesDelta; }
+
+    if (adj.weekKey) {
+      if (!acc.weekStats.has(adj.weekKey)) acc.weekStats.set(adj.weekKey, emptyWeek("(adjustment)"));
+      const w = acc.weekStats.get(adj.weekKey)!;
+      w.setWins += adj.winsDelta;
+      w.setLosses += adj.lossesDelta;
+      if (adj.gameType === "crkt") { w.crktWins += adj.winsDelta; w.crktLosses += adj.lossesDelta; }
+      else if (adj.gameType === "601") { w.col601Wins += adj.winsDelta; w.col601Losses += adj.lossesDelta; }
+      else if (adj.gameType === "501") { w.col501Wins += adj.winsDelta; w.col501Losses += adj.lossesDelta; }
+      acc.weeksPlayed.add(adj.weekKey);
+    }
+  }
+
   // ── G. Compute win% for SOS (REG only) ──────────────────────────────────────
   const playerWinPct = new Map<string, number>();
   if (phase === "REG") {
@@ -554,8 +654,11 @@ async function scrapePhase(
 
     const homeComp = teamCompetitors.find((t) => String(t.id) === meta.homeTeamId);
     const awayComp  = teamCompetitors.find((t) => String(t.id) === meta.awayTeamId);
-    const homeTeamNameStr = String(homeComp?.team_name ?? homeComp?.name ?? "");
-    const awayTeamNameStr = String(awayComp?.team_name  ?? awayComp?.name  ?? "");
+    // DC's lineups/history API inconsistently HTML-escapes team names (e.g.
+    // "Kings &amp; Queens" some calls, "Kings & Queens" others) — decode
+    // defensively so stored names and alert text are always clean.
+    const homeTeamNameStr = decodeHtmlEntities(String(homeComp?.team_name ?? homeComp?.name ?? ""));
+    const awayTeamNameStr = decodeHtmlEntities(String(awayComp?.team_name  ?? awayComp?.name  ?? ""));
 
     const matchData = matchDataMap.get(guid);
     const parsedDate = matchData?.schedDate ?? weekKeyToISODate(meta.weekKey);
@@ -594,9 +697,62 @@ async function scrapePhase(
 
     if (homeScore + awayScore === 0) continue;
 
+    // Determine whether this guid is an extra/duplicate recap for a match
+    // that's already claimed by a different guid. matches.id here is DC's
+    // league_match_id, embedded directly in the recap — the authoritative
+    // link, not a team+date guess. This happens two ways we've seen in
+    // practice: (1) a match gets exited and restarted, producing two DC
+    // recaps DC never auto-merges even after an admin reassigns one onto
+    // the correct date; (2) an aborted/restarted game on a second board.
+    // Whichever guid is processed first "claims" the row; later guids are
+    // flagged, not merged — we have no reliable way to know if a second
+    // recap's score is a correction, a duplicate, or one half of a split
+    // match, so guessing would risk silently showing the wrong result.
+    const realMatchId = matchInfo?.league_match_id ?? null;
+    let existingRowFound = false;
+    let existingDcGuid: string | null = null;
+    let existingScore: { home: number; away: number } | null = null;
+    if (realMatchId != null && realMatchId !== guidToFakeId(guid)) {
+      const [existingRow] = await db
+        .select({ dcGuid: matches.dcGuid, homeScore: matches.homeScore, awayScore: matches.awayScore })
+        .from(matches)
+        .where(eq(matches.id, realMatchId))
+        .limit(1);
+      if (existingRow) {
+        existingRowFound = true;
+        existingDcGuid = existingRow.dcGuid;
+        existingScore = { home: existingRow.homeScore ?? 0, away: existingRow.awayScore ?? 0 };
+      }
+    }
+    const isDuplicateGuid = existingDcGuid != null && existingDcGuid !== guid;
+
+    // Flag forfeits for admin review — DC records these only as free-form
+    // notes on the match, never attributed to a player. Segments/games data
+    // for a forfeited set is simply absent, so player-level stats can't
+    // reflect it automatically; an admin can enter a manual adjustment.
+    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
+    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
+    if (forfeitNotes.length > 0) {
+      for (const note of forfeitNotes) {
+        await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${note}`, guid);
+      }
+    }
+
+    if (isDuplicateGuid) {
+      await raiseAlert(
+        targetSeasonId, realMatchId, "duplicate_history_entry",
+        `${homeTeamNameStr} vs ${awayTeamNameStr}: DartConnect has two separate, unmerged recaps for this match — one shows ` +
+        `${existingScore?.home}-${existingScore?.away} (currently displayed on the site), the other shows ${homeScore}-${awayScore}. ` +
+        `This usually means the match was exited and resumed as a separate session in DC. Check DartConnect for the real result — ` +
+        `the score shown here may not be it until DC merges the recaps.`,
+        existingDcGuid, guid
+      );
+      continue; // don't touch scores or create a row for the extra recap
+    }
+
     // For REG: update scores on lineup-sourced rows (scores only — dcGuid is set
-    // by the GUID upsert below to avoid unique-constraint conflicts when the same
-    // two teams appear in both REG and POST, giving two rows with the same team pair).
+    // below to avoid unique-constraint conflicts when the same two teams appear
+    // in both REG and POST, giving two rows with the same team pair).
     if (phase === "REG") {
       await db
         .update(matches)
@@ -608,41 +764,55 @@ async function scrapePhase(
         ));
     }
 
-    // GUID-based upsert — creates the match if sourced from history rather than lineups
-    await db
-      .insert(matches)
-      .values({
-        id: guidToFakeId(guid),
-        seasonId: targetSeasonId,
-        homeTeamId: homeSerialId,
-        awayTeamId: awaySerialId,
-        homeTeamName: homeTeamNameStr,
-        awayTeamName: awayTeamNameStr,
-        schedDate: parsedDate,
-        prettyDate: meta.weekKey || null,
-        roundSeq,
-        status: "C",
-        homeScore,
-        awayScore,
-        dcGuid: guid,
-        seasonStatus: phase,
-      })
-      .onConflictDoUpdate({
-        target: matches.dcGuid,
-        set: {
+    if (existingRowFound) {
+      // Adopt this guid onto the real lineups-sourced row instead of creating
+      // a synthetic duplicate (existingDcGuid is null here, or already equal
+      // to this guid — either way it's safe to (re)claim it).
+      await db.update(matches).set({
+        dcGuid: guid, homeScore, awayScore, status: "C",
+        schedDate: parsedDate, prettyDate: meta.weekKey || null,
+        ...(roundSeq != null ? { roundSeq } : {}),
+        updatedAt: new Date(),
+      }).where(eq(matches.id, realMatchId!));
+    } else {
+      // No known real row for this guid (e.g. history-only match, or the
+      // guid's own synthetic id already matches the real row) — normal
+      // GUID-based upsert.
+      await db
+        .insert(matches)
+        .values({
+          id: guidToFakeId(guid),
+          seasonId: targetSeasonId,
           homeTeamId: homeSerialId,
           awayTeamId: awaySerialId,
           homeTeamName: homeTeamNameStr,
           awayTeamName: awayTeamNameStr,
           schedDate: parsedDate,
           prettyDate: meta.weekKey || null,
+          roundSeq,
+          status: "C",
           homeScore,
           awayScore,
-          ...(roundSeq != null ? { roundSeq } : {}),
-          status: "C",
-          updatedAt: new Date(),
-        },
-      });
+          dcGuid: guid,
+          seasonStatus: phase,
+        })
+        .onConflictDoUpdate({
+          target: matches.dcGuid,
+          set: {
+            homeTeamId: homeSerialId,
+            awayTeamId: awaySerialId,
+            homeTeamName: homeTeamNameStr,
+            awayTeamName: awayTeamNameStr,
+            schedDate: parsedDate,
+            prettyDate: meta.weekKey || null,
+            homeScore,
+            awayScore,
+            ...(roundSeq != null ? { roundSeq } : {}),
+            status: "C",
+            updatedAt: new Date(),
+          },
+        });
+    }
     matchScoresUpdated++;
   }
   debug[`${phase}_matchScoresUpdated`] = matchScoresUpdated;
@@ -943,7 +1113,9 @@ async function scrapeSeasonStats(
     let homeScore = m.home_score ?? 0;
     let awayScore = m.away_score ?? 0;
     if (status !== "P" && m.sched_date && m.sched_date > futureCutoffStr) {
-      matchUpsertErrors.push(`match ${m.id}: suspicious result (status=${status}, score=${homeScore}-${awayScore}) for future date ${m.sched_date} — kept pending`);
+      const msg = `${m.left.team_name} vs ${m.right.team_name}: suspicious result (status=${status}, score=${homeScore}-${awayScore}) for future date ${m.sched_date} — kept pending`;
+      matchUpsertErrors.push(`match ${m.id}: ${msg}`);
+      await raiseAlert(targetSeasonId, m.id, "suspicious_future_result", msg);
       status = "P";
       homeScore = 0;
       awayScore = 0;
@@ -958,13 +1130,14 @@ async function scrapeSeasonStats(
     try {
       await db
         .insert(matches)
-        .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: m.left.team_name, awayTeamName: m.right.team_name, schedDate: m.sched_date, schedTime: m.sched_time, status, homeScore, awayScore, dcMatchId, seasonStatus: m.season_status, prettyDate: m.pretty_date })
+        .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: decodeHtmlEntities(m.left.team_name), awayTeamName: decodeHtmlEntities(m.right.team_name), schedDate: m.sched_date, schedTime: m.sched_time, status, homeScore, awayScore, dcMatchId, seasonStatus: m.season_status, prettyDate: m.pretty_date })
         .onConflictDoUpdate({ target: matches.id, set: { status, homeScore, awayScore, dcMatchId, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, divisionName: divName, updatedAt: new Date() } });
       matchesUpdated++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       matchUpsertErrors.push(`match ${m.id}: ${msg}`);
       console.log(`[scrape] match upsert id=${m.id} ERROR: ${msg}`);
+      await raiseAlert(targetSeasonId, m.id, "match_upsert_error", `${m.left.team_name} vs ${m.right.team_name}: ${msg}`);
     }
   }
   if (matchUpsertErrors.length > 0) debug.matchUpsertErrors = matchUpsertErrors;

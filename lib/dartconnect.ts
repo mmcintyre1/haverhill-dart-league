@@ -346,6 +346,11 @@ export interface DCMatchInfo {
   match_winner: number | null; // 0 = opponents[0] won, 1 = opponents[1] won
   round_seq?: number | null;   // may be present directly on matchInfo
   sched_date?: string | null;
+  league_match_id?: number | null; // the authoritative matches.id (DC league_match_id)
+  // Free-form admin notes — DC's only record of a forfeit, e.g.
+  // "Set #11: Set Forfeited by The Punishers". Not attributed to a player;
+  // segments/games data for a forfeited set is simply absent.
+  notes?: { sets?: string[] | null; games?: string[] | null } | null;
   opponents: Array<{
     name: string;
     score: number;       // league points for this match — includes forfeited sets
@@ -581,7 +586,7 @@ function normalizeAddress(addr: string): string {
   return addr;
 }
 
-function decodeHtmlEntities(s: string): string {
+export function decodeHtmlEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")

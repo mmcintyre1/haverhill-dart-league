@@ -265,3 +265,52 @@ export const scrapeLog = pgTable("scrape_log", {
   debugJson: text("debug_json"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ─── Admin Alerts ───────────────────────────────────────────────────────────
+// Data-quality issues surfaced during scraping that need a human look —
+// forfeits DC doesn't expose player-level, suspicious/future results, per-row
+// upsert failures, etc. `type` distinguishes the kind so the admin UI can
+// offer type-specific actions (e.g. "Create Adjustment" for forfeits).
+
+export const adminAlerts = pgTable(
+  "admin_alerts",
+  {
+    id: serial("id").primaryKey(),
+    seasonId: integer("season_id")
+      .notNull()
+      .references(() => seasons.id),
+    matchId: integer("match_id").references(() => matches.id),
+    type: text("type").notNull(), // "forfeit" | "suspicious_future_result" | "match_upsert_error"
+    message: text("message").notNull(),
+    // Recap guid(s) so the admin UI can link straight to DartConnect. dcGuid2
+    // is set only for duplicate_history_entry, to compare both recaps.
+    dcGuid: text("dc_guid"),
+    dcGuid2: text("dc_guid_2"),
+    resolved: boolean("resolved").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("admin_alerts_dedupe_idx").on(t.matchId, t.type, t.message)]
+);
+
+// ─── Player Stat Adjustments ────────────────────────────────────────────────
+// Manual corrections for game-level results DC doesn't expose per-player
+// (e.g. singles forfeits) — merged into the scrape's in-memory accumulators
+// each run, so every derived stat (AVG, PTS, SOS, weekly breakdown) stays
+// consistent instead of being patched ad hoc after the fact.
+
+export const playerStatAdjustments = pgTable("player_stat_adjustments", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .notNull()
+    .references(() => seasons.id),
+  playerId: integer("player_id")
+    .notNull()
+    .references(() => players.id),
+  phase: text("phase").notNull().default("REG"), // "REG" | "POST"
+  gameType: text("game_type").notNull(), // "crkt" | "601" | "501"
+  winsDelta: integer("wins_delta").notNull().default(0),
+  lossesDelta: integer("losses_delta").notNull().default(0),
+  weekKey: text("week_key"), // optional DC "27 Jan 2026" format — also bumps that week's row if set
+  note: text("note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});

@@ -2,6 +2,12 @@
 
 import { useState, useEffect } from "react";
 
+// Local copy (not imported from lib/dartconnect.ts, which pulls in server-only
+// fetch logic that has no reason to end up in the client bundle).
+function dcRecapUrl(guid: string): string {
+  return `https://recap.dartconnect.com/matches/${guid}`;
+}
+
 type Season = {
   id: number;
   name: string;
@@ -10,7 +16,7 @@ type Season = {
   lastScrapedAt: Date | null;
 };
 
-type TabId = "posts" | "refresh" | "scoring" | "documents" | "config";
+type TabId = "posts" | "refresh" | "scoring" | "alerts" | "documents" | "config";
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +25,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     { id: "posts", label: "News Posts" },
     { id: "refresh", label: "Data Refresh" },
     { id: "scoring", label: "Scoring" },
+    { id: "alerts", label: "Alerts" },
     { id: "documents", label: "Documents" },
     { id: "config", label: "Site Config" },
   ];
@@ -1157,6 +1164,394 @@ function SiteConfigTab({ secret }: { secret: string }) {
   );
 }
 
+// ── Alerts tab ────────────────────────────────────────────────────────────────
+
+type Alert = {
+  id: number;
+  seasonId: number;
+  matchId: number | null;
+  type: string;
+  message: string;
+  resolved: boolean;
+  createdAt: string;
+  dcGuid: string | null;
+  dcGuid2: string | null;
+};
+
+type AdjPlayer = { id: number; name: string; teamName: string | null };
+type AdjWeek = { weekKey: string; isoDate: string | null };
+
+type Adjustment = {
+  id: number;
+  playerId: number;
+  playerName: string;
+  phase: string;
+  gameType: string;
+  winsDelta: number;
+  lossesDelta: number;
+  weekKey: string | null;
+  note: string | null;
+  createdAt: string;
+};
+
+const ALERT_TYPE_LABELS: Record<string, string> = {
+  forfeit: "Forfeit",
+  suspicious_future_result: "Suspicious result",
+  match_upsert_error: "Match save error",
+  duplicate_history_entry: "Unmerged DC recaps",
+  player_both_sides: "Lineup mix-up",
+  player_repeat_game_type: "Repeat game-type entry",
+};
+
+const GAME_TYPE_LABELS: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
+
+function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
+  const [seasonId, setSeasonId] = useState<number | null>(seasons.find(s => s.isActive)?.id ?? seasons[0]?.id ?? null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [showResolved, setShowResolved] = useState(false);
+  const [players, setPlayers] = useState<AdjPlayer[]>([]);
+  const [weeks, setWeeks] = useState<AdjWeek[]>([]);
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<Result | null>(null);
+
+  // Adjustment form state
+  const [formOpen, setFormOpen] = useState(false);
+  const [sourceAlert, setSourceAlert] = useState<Alert | null>(null);
+  const [playerName, setPlayerName] = useState("");
+  const [weekKey, setWeekKey] = useState("");
+  const [phase, setPhase] = useState<"REG" | "POST">("REG");
+  const [gameType, setGameType] = useState<"crkt" | "601" | "501">("crkt");
+  const [winsDelta, setWinsDelta] = useState("1");
+  const [lossesDelta, setLossesDelta] = useState("0");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const authHeaders = (extra?: Record<string, string>): Record<string, string> => ({
+    "Content-Type": "application/json",
+    ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+    ...extra,
+  });
+
+  async function load() {
+    if (!seasonId) return;
+    setLoading(true);
+    const [alertsRes, playersRes, weeksRes, adjRes] = await Promise.all([
+      fetch(`/api/admin/alerts?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
+      fetch(`/api/admin/players?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
+      fetch(`/api/admin/weeks?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
+      fetch(`/api/admin/player-adjustments?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
+    ]);
+    setAlerts(alertsRes.ok ? await alertsRes.json() : []);
+    setPlayers(playersRes.ok ? await playersRes.json() : []);
+    setWeeks(weeksRes.ok ? await weeksRes.json() : []);
+    setAdjustments(adjRes.ok ? await adjRes.json() : []);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [seasonId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function resolveAlert(id: number, resolved: boolean) {
+    await fetch("/api/admin/alerts", { method: "PATCH", headers: authHeaders(), body: JSON.stringify({ id, resolved }) });
+    setAlerts(prev => prev.map(a => (a.id === id ? { ...a, resolved } : a)));
+  }
+
+  function startAdjustmentFromAlert(a: Alert) {
+    setSourceAlert(a);
+    setNote(a.message);
+    setFormOpen(true);
+    requestAnimationFrame(() => document.getElementById("adjustment-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function openBlankForm() {
+    setSourceAlert(null);
+    setFormOpen(true);
+  }
+
+  function formatWeekLabel(w: AdjWeek) {
+    if (!w.isoDate) return w.weekKey;
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(w.isoDate + "T12:00:00"));
+  }
+
+  async function submitAdjustment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!seasonId) return;
+    const player = players.find(p => p.name === playerName);
+    if (!player) {
+      setResult({ ok: false, message: `No rostered player matches "${playerName}" — pick one from the list.` });
+      return;
+    }
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/admin/player-adjustments", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          seasonId,
+          playerId: player.id,
+          phase,
+          gameType,
+          winsDelta: parseInt(winsDelta) || 0,
+          lossesDelta: parseInt(lossesDelta) || 0,
+          weekKey: weekKey || null,
+          note: note || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Unknown error");
+
+      if (sourceAlert) {
+        await resolveAlert(sourceAlert.id, true);
+        setResult({ ok: true, message: `Correction saved for ${player.name}, and the flagged alert is marked resolved. It'll show up on the site after the next Data Refresh.` });
+      } else {
+        setResult({ ok: true, message: `Correction saved for ${player.name}. It'll show up on the site after the next Data Refresh.` });
+      }
+      setPlayerName(""); setNote(""); setWinsDelta("1"); setLossesDelta("0"); setWeekKey(""); setSourceAlert(null);
+      load();
+    } catch (e) {
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAdjustment(id: number) {
+    await fetch(`/api/admin/player-adjustments?id=${id}`, { method: "DELETE", headers: authHeaders({ "Content-Type": "" }) });
+    setAdjustments(prev => prev.filter(a => a.id !== id));
+  }
+
+  const visibleAlerts = alerts.filter(a => showResolved || !a.resolved);
+  const inputCls = "w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500";
+  const labelCls = "block text-xs text-slate-400 mb-1";
+
+  return (
+    <div className="space-y-8">
+      {/* Season selector */}
+      <div>
+        <label className={labelCls}>Season</label>
+        <select
+          value={seasonId ?? ""}
+          onChange={e => setSeasonId(e.target.value ? parseInt(e.target.value) : null)}
+          className={`${inputCls} max-w-xs`}
+        >
+          {seasons.map(s => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="text-slate-500 text-sm py-2">Loading…</div>
+      ) : (
+        <>
+          {/* Step 1: Alerts */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-slate-200">1. Flagged issues</h3>
+              <label className="flex items-center gap-1.5 text-xs text-slate-400">
+                <input type="checkbox" checked={showResolved} onChange={e => setShowResolved(e.target.checked)} />
+                Show resolved
+              </label>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              Things the last scrape spotted that need a human decision — a forfeit DC won&apos;t attribute to a player, a
+              result that looked wrong, etc. <span className="text-slate-400">Resolving an alert just hides it from this list</span> —
+              it doesn&apos;t change any stats on its own. For a forfeit, use <span className="text-slate-400">Fix with a correction</span> below
+              to actually adjust the player&apos;s record; that will resolve the alert for you.
+            </p>
+            {visibleAlerts.length === 0 ? (
+              <p className="text-sm text-slate-500">No {showResolved ? "" : "open "}alerts for this season.</p>
+            ) : (
+              <div className="space-y-2">
+                {visibleAlerts.map(a => (
+                  <div key={a.id} className={`rounded-lg border px-3 py-2.5 ${a.resolved ? "border-slate-800 bg-slate-900/40 opacity-60" : "border-slate-700 bg-slate-800/40"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="inline-block text-[0.65rem] font-semibold uppercase tracking-wider text-amber-500 mb-1">
+                          {ALERT_TYPE_LABELS[a.type] ?? a.type}
+                        </span>
+                        <p className="text-sm text-slate-300 break-words">{a.message}</p>
+                        {(a.dcGuid || a.dcGuid2) && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                            {a.dcGuid && (
+                              <a href={dcRecapUrl(a.dcGuid)} target="_blank" rel="noopener noreferrer" className="text-xs text-amber-500 hover:text-amber-400 transition-colors">
+                                {a.dcGuid2 ? "View displayed recap ↗" : "View recap ↗"}
+                              </a>
+                            )}
+                            {a.dcGuid2 && (
+                              <a href={dcRecapUrl(a.dcGuid2)} target="_blank" rel="noopener noreferrer" className="text-xs text-amber-500 hover:text-amber-400 transition-colors">
+                                View other recap ↗
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {a.type === "forfeit" && !a.resolved && (
+                          <button
+                            onClick={() => startAdjustmentFromAlert(a)}
+                            title="Opens the correction form below, pre-filled with this alert's context"
+                            className="text-xs px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60 transition-colors"
+                          >
+                            Fix with a correction
+                          </button>
+                        )}
+                        <button
+                          onClick={() => resolveAlert(a.id, !a.resolved)}
+                          title={a.resolved ? "Move this back into the open list" : "Hide this from the open list — doesn't change any stats"}
+                          className="text-xs px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-700 transition-colors"
+                        >
+                          {a.resolved ? "Reopen" : "Dismiss"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Step 2: Adjustment form */}
+          <div id="adjustment-form">
+            <h3 className="text-sm font-semibold text-slate-200 mb-1">2. Record a correction</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Nudges one player&apos;s win/loss record for a game type DC didn&apos;t capture (e.g. a singles forfeit). It&apos;s
+              layered on top of the real scraped data — not a typo fix — and takes effect the next time Data Refresh runs.
+            </p>
+            {!formOpen ? (
+              <button onClick={openBlankForm} className="px-3 py-1.5 rounded border border-dashed border-slate-700 text-sm text-slate-400 hover:text-amber-400 hover:border-amber-500/50 transition-colors">
+                + Record a correction
+              </button>
+            ) : (
+              <form onSubmit={submitAdjustment} className="space-y-4 rounded-lg border border-slate-800 p-4">
+                {sourceAlert && (
+                  <div className="flex items-start justify-between gap-3 rounded bg-amber-900/20 border border-amber-800/40 px-3 py-2 text-xs text-amber-300">
+                    <span>Fixing flagged issue: &quot;{sourceAlert.message}&quot;</span>
+                    <button type="button" onClick={() => setSourceAlert(null)} className="shrink-0 opacity-70 hover:opacity-100">
+                      Unlink ×
+                    </button>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-2">Who &amp; when</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Player</label>
+                      <input
+                        list="adj-player-list"
+                        value={playerName}
+                        onChange={e => setPlayerName(e.target.value)}
+                        placeholder="Start typing a name…"
+                        className={inputCls}
+                        required
+                      />
+                      <datalist id="adj-player-list">
+                        {players.map(p => (
+                          <option key={p.id} value={p.name}>{p.teamName ?? ""}</option>
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Week (optional)</label>
+                      <select value={weekKey} onChange={e => setWeekKey(e.target.value)} className={inputCls}>
+                        <option value="">Season total only — no specific week</option>
+                        {weeks.map(w => (
+                          <option key={w.weekKey} value={w.weekKey}>{formatWeekLabel(w)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-2">What result</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Game type</label>
+                      <select value={gameType} onChange={e => setGameType(e.target.value as typeof gameType)} className={inputCls}>
+                        <option value="crkt">Cricket</option>
+                        <option value="601">601</option>
+                        <option value="501">501</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Phase</label>
+                      <select value={phase} onChange={e => setPhase(e.target.value as typeof phase)} className={inputCls}>
+                        <option value="REG">Regular season</option>
+                        <option value="POST">Playoffs</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-2">The correction</p>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className={labelCls}>Wins to add</label>
+                      <input type="number" value={winsDelta} onChange={e => setWinsDelta(e.target.value)} className={inputCls} />
+                      <p className="text-[0.65rem] text-slate-600 mt-1">Negative removes a win instead.</p>
+                    </div>
+                    <div className="flex-1">
+                      <label className={labelCls}>Losses to add</label>
+                      <input type="number" value={lossesDelta} onChange={e => setLossesDelta(e.target.value)} className={inputCls} />
+                      <p className="text-[0.65rem] text-slate-600 mt-1">Negative removes a loss instead.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelCls}>Why (shown in the history list below, for future reference)</label>
+                  <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} className={inputCls} placeholder="e.g. Singles 501 forfeit, Set #11 vs The Punishers" />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button type="submit" disabled={saving} className="px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium transition-colors disabled:opacity-50">
+                    {saving ? "Saving…" : "Save Correction"}
+                  </button>
+                  <button type="button" onClick={() => setFormOpen(false)} className="text-sm text-slate-500 hover:text-slate-300">
+                    Cancel
+                  </button>
+                </div>
+                {result && <ResultBanner result={result} onDismiss={() => setResult(null)} />}
+              </form>
+            )}
+          </div>
+
+          {/* Step 3: History */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-200 mb-1">3. Correction history</h3>
+            <p className="text-xs text-slate-500 mb-3">Every manual correction applied to this season, most recent first.</p>
+            {adjustments.length === 0 ? (
+              <p className="text-sm text-slate-500">None yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {adjustments.map(a => (
+                  <div key={a.id} className="flex items-center justify-between gap-3 rounded border border-slate-800 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <span className="font-medium text-slate-200">{a.playerName}</span>
+                      <span className="text-slate-500"> — {GAME_TYPE_LABELS[a.gameType] ?? a.gameType} {a.phase === "POST" ? "Playoffs" : "Regular"} </span>
+                      {a.weekKey && <span className="text-slate-500">· {a.weekKey} </span>}
+                      <span className={a.winsDelta > 0 ? "text-emerald-400" : "text-slate-400"}>+{a.winsDelta}W</span>{" "}
+                      <span className={a.lossesDelta > 0 ? "text-rose-400" : "text-slate-400"}>+{a.lossesDelta}L</span>
+                      {a.note && <span className="text-slate-500 truncate"> · {a.note}</span>}
+                    </div>
+                    <button onClick={() => deleteAdjustment(a.id)} className="shrink-0 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 export default function AdminPanel({ seasons, secret }: { seasons: Season[]; secret: string }) {
@@ -1168,6 +1563,7 @@ export default function AdminPanel({ seasons, secret }: { seasons: Season[]; sec
       {tab === "posts"    ? <PostsTab secret={secret} /> :
        tab === "refresh"  ? <RefreshTab seasons={seasons} secret={secret} /> :
        tab === "scoring"  ? <ScoringTab seasons={seasons} secret={secret} /> :
+       tab === "alerts"   ? <AlertsTab seasons={seasons} secret={secret} /> :
        tab === "documents"? <DocumentsTab secret={secret} /> :
                             <SiteConfigTab secret={secret} />}
     </div>
