@@ -52,7 +52,12 @@ async function getNextRound(seasonId: number) {
     .limit(40);
 
   if (pending.length === 0) return null;
-  const nextDate = pending[0].schedDate ?? null;
+  // A date with only BYE rows (no real opponent) never turns "complete" —
+  // skip straight to the earliest date that has at least one real match, so
+  // a lingering bye doesn't freeze "Next Up" on a week that's already over.
+  const nextRealMatch = pending.find((m) => m.homeTeamName && m.awayTeamName);
+  if (!nextRealMatch) return null;
+  const nextDate = nextRealMatch.schedDate ?? null;
   const nextMatches = pending.filter((m) => m.schedDate === nextDate);
 
   const byDivision = new Map<string, typeof nextMatches>();
@@ -63,7 +68,7 @@ async function getNextRound(seasonId: number) {
   }
 
   return {
-    round: pending[0].roundSeq,
+    round: nextRealMatch.roundSeq,
     schedDate: nextDate,
     divisions: [...byDivision.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -86,10 +91,21 @@ async function getLastRound(seasonId: number) {
 
   if (completed.length === 0) return null;
   const lastDate = completed[0].schedDate ?? null;
+  const lastMatches = completed.filter((m) => m.schedDate === lastDate);
+
+  const byDivision = new Map<string, typeof lastMatches>();
+  for (const m of lastMatches) {
+    const key = m.divisionName ?? "";
+    if (!byDivision.has(key)) byDivision.set(key, []);
+    byDivision.get(key)!.push(m);
+  }
+
   return {
     round: completed[0].roundSeq,
     schedDate: lastDate,
-    matches: completed.filter((m) => m.schedDate === lastDate),
+    divisions: [...byDivision.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([divisionName, divMatches]) => ({ divisionName, matches: divMatches })),
   };
 }
 
@@ -182,11 +198,15 @@ export default async function HomePage() {
                 </span>
               </div>
               <div className="divide-y divide-slate-800">
-                {nextRound.divisions.map((d) => (
-                  <div key={d.divisionName}>
-                    <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      {d.divisionName || "—"}
-                    </div>
+                {nextRound.divisions.map((d, i) => (
+                  <details key={d.divisionName} className="group" open={i === 0}>
+                    <summary className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-800/40 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
+                      <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block shrink-0">▸</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        {d.divisionName || "—"}
+                      </span>
+                      <span className="text-[11px] text-slate-600">· {d.matches.length} match{d.matches.length === 1 ? "" : "es"}</span>
+                    </summary>
                     <div className="divide-y divide-slate-800/60">
                       {d.matches.map((m) => (
                         <div
@@ -213,7 +233,7 @@ export default async function HomePage() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 ))}
               </div>
               <div className="px-4 py-2 border-t border-slate-800">
@@ -236,44 +256,56 @@ export default async function HomePage() {
                 </span>
               </div>
               <div className="divide-y divide-slate-800">
-                {lastRound.matches.map((m) => {
-                  const hw = (m.homeScore ?? 0) > (m.awayScore ?? 0);
-                  const aw = (m.awayScore ?? 0) > (m.homeScore ?? 0);
-                  return (
-                    <div
-                      key={m.id}
-                      className="px-3 py-2.5 flex items-center gap-2 text-sm"
-                    >
-                      <span className="text-slate-500 text-xs w-5 shrink-0">{m.divisionName}</span>
-                      <span className={`flex-1 text-right truncate font-medium ${hw ? "text-white" : "text-slate-400"}`}>
-                        {m.homeTeamName}
+                {lastRound.divisions.map((d, i) => (
+                  <details key={d.divisionName} className="group" open={i === 0}>
+                    <summary className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-800/40 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
+                      <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block shrink-0">▸</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        {d.divisionName || "—"}
                       </span>
-                      <span className="text-slate-200 font-bold tabular-nums text-xs shrink-0">
-                        {m.homeScore} – {m.awayScore}
-                      </span>
-                      <span className={`flex-1 truncate font-medium ${aw ? "text-white" : "text-slate-400"}`}>
-                        {m.awayTeamName}
-                      </span>
-                      <span className="w-5 shrink-0 flex items-center justify-end">
-                        {m.dcGuid && (
-                          <a
-                            href={dcRecapUrl(m.dcGuid)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="View on DartConnect"
-                            className="text-red-700 hover:text-red-500 transition-colors"
+                      <span className="text-[11px] text-slate-600">· {d.matches.length} match{d.matches.length === 1 ? "" : "es"}</span>
+                    </summary>
+                    <div className="divide-y divide-slate-800/60">
+                      {d.matches.map((m) => {
+                        const hw = (m.homeScore ?? 0) > (m.awayScore ?? 0);
+                        const aw = (m.awayScore ?? 0) > (m.homeScore ?? 0);
+                        return (
+                          <div
+                            key={m.id}
+                            className="px-3 py-2 flex items-center gap-2 text-sm"
                           >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <circle cx="12" cy="12" r="10"/>
-                              <circle cx="12" cy="12" r="5"/>
-                              <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                            </svg>
-                          </a>
-                        )}
-                      </span>
+                            <span className={`flex-1 text-right truncate font-medium ${hw ? "text-white" : "text-slate-400"}`}>
+                              {m.homeTeamName}
+                            </span>
+                            <span className="text-slate-200 font-bold tabular-nums text-xs shrink-0">
+                              {m.homeScore} – {m.awayScore}
+                            </span>
+                            <span className={`flex-1 truncate font-medium ${aw ? "text-white" : "text-slate-400"}`}>
+                              {m.awayTeamName}
+                            </span>
+                            <span className="w-5 shrink-0 flex items-center justify-end">
+                              {m.dcGuid && (
+                                <a
+                                  href={dcRecapUrl(m.dcGuid)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label="View on DartConnect"
+                                  className="text-red-700 hover:text-red-500 transition-colors"
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <circle cx="12" cy="12" r="5"/>
+                                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                  </svg>
+                                </a>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </details>
+                ))}
               </div>
               <div className="px-4 py-2 border-t border-slate-800">
                 <Link href="/matches" className="text-xs text-slate-500 hover:text-amber-400 transition-colors">
