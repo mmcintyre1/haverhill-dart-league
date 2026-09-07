@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { db, seasons, teams, matches, playerStats, playerWeekStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
-import { eq, and, or, gt, desc, asc } from "drizzle-orm";
+import { eq, and, or, gt, desc, asc, isNull } from "drizzle-orm";
 import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import { formatShortDate } from "@/lib/format";
@@ -27,6 +27,7 @@ type MatchRow = {
   schedDate: string | null;
   prettyDate: string | null;
   opponent: string;
+  isBye: boolean;
   teamScore: number;
   opponentScore: number;
   dcGuid: string | null;
@@ -43,7 +44,13 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
       .where(
         and(
           eq(matches.seasonId, seasonId),
-          or(eq(matches.status, "C"), gt(matches.homeScore!, 0), gt(matches.awayScore!, 0))
+          or(
+            eq(matches.status, "C"),
+            gt(matches.homeScore!, 0),
+            gt(matches.awayScore!, 0),
+            isNull(matches.homeTeamId),
+            isNull(matches.awayTeamId),
+          )
         )
       )
       .orderBy(asc(matches.schedDate)),
@@ -130,7 +137,8 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
   for (const m of allMatches) {
     const hs = m.homeScore ?? 0;
     const as_ = m.awayScore ?? 0;
-    if (hs + as_ === 0) continue;
+    const isBye = !m.homeTeamId || !m.awayTeamId;
+    if (!isBye && hs + as_ === 0) continue;
 
     const home = m.homeTeamId ? stats.get(m.homeTeamId) : null;
     const away = m.awayTeamId ? stats.get(m.awayTeamId) : null;
@@ -152,30 +160,36 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
         roundSeq: m.roundSeq ?? null,
         schedDate: m.schedDate ?? null,
         prettyDate: m.prettyDate ?? null,
-        opponent: m.awayTeamName ?? "Unknown",
+        opponent: isBye ? "BYE" : (m.awayTeamName ?? "Unknown"),
+        isBye,
         teamScore: hs,
         opponentScore: as_,
         dcGuid: m.dcGuid ?? null,
         ...getWeekStats(m.homeTeamId),
       });
-      home.pts += hs;
-      if (hs > as_) home.wins++;
-      else home.losses++;
+      if (!isBye) {
+        home.pts += hs;
+        if (hs > as_) home.wins++;
+        else home.losses++;
+      }
     }
     if (away && m.awayTeamId) {
       away.matchRows.push({
         roundSeq: m.roundSeq ?? null,
         schedDate: m.schedDate ?? null,
         prettyDate: m.prettyDate ?? null,
-        opponent: m.homeTeamName ?? "Unknown",
+        opponent: isBye ? "BYE" : (m.homeTeamName ?? "Unknown"),
+        isBye,
         teamScore: as_,
         opponentScore: hs,
         dcGuid: m.dcGuid ?? null,
         ...getWeekStats(m.awayTeamId),
       });
-      away.pts += as_;
-      if (as_ > hs) away.wins++;
-      else away.losses++;
+      if (!isBye) {
+        away.pts += as_;
+        if (as_ > hs) away.wins++;
+        else away.losses++;
+      }
     }
   }
 
@@ -335,15 +349,21 @@ export default async function StandingsPage({
                               <span className="w-24 shrink-0 text-sm text-slate-500 tabular-nums whitespace-nowrap">
                                 {formatShortDate(m.schedDate) || "—"}
                               </span>
-                              <span className="flex-1 sm:w-48 sm:flex-none min-w-0 text-sm text-slate-300 truncate">{m.opponent}</span>
+                              <span className={`flex-1 sm:w-48 sm:flex-none min-w-0 text-sm truncate ${m.isBye ? "text-slate-600 italic" : "text-slate-300"}`}>{m.opponent}</span>
                               <span className="hidden sm:block w-16 text-center text-sm text-emerald-400 tabular-nums">{m.weekMpr != null ? m.weekMpr.toFixed(2) : "—"}</span>
                               <span className="hidden sm:block w-16 text-center text-sm text-sky-400 tabular-nums">{m.weekPpr != null ? m.weekPpr.toFixed(2) : "—"}</span>
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className={`inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs font-semibold tabular-nums min-w-[3.5rem] ${
-                                  won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
-                                }`}>
-                                  {won ? "W" : "L"} {m.teamScore}–{m.opponentScore}
-                                </span>
+                                {m.isBye ? (
+                                  <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs font-semibold tabular-nums min-w-[3.5rem] bg-slate-800 text-slate-500">
+                                    BYE
+                                  </span>
+                                ) : (
+                                  <span className={`inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs font-semibold tabular-nums min-w-[3.5rem] ${
+                                    won ? "bg-emerald-900/40 text-emerald-300" : "bg-rose-900/40 text-rose-300"
+                                  }`}>
+                                    {won ? "W" : "L"} {m.teamScore}–{m.opponentScore}
+                                  </span>
+                                )}
                                 {m.dcGuid && (
                                   <a
                                     href={dcRecapUrl(m.dcGuid)}

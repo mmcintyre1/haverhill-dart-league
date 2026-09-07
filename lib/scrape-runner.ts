@@ -720,6 +720,7 @@ async function scrapePhase(
     const awayTeamNameStr = decodeHtmlEntities(String(awayComp?.team_name  ?? awayComp?.name  ?? "")) ?? "";
 
     const matchData = matchDataMap.get(guid);
+    const matchInfo = matchData?.matchInfo;
     const parsedDate = matchData?.schedDate ?? weekKeyToISODate(meta.weekKey);
     const roundSeq: number | null =
       meta.roundSeq != null ? meta.roundSeq
@@ -727,34 +728,65 @@ async function scrapePhase(
       : parsedDate != null ? (dateToRoundSeq.get(parsedDate) ?? null)
       : null;
 
-    // Compute set-win scores from segments as fallback
+    // Derive the team score from actual per-set leg data — the same thing
+    // DC's own "Match Legs" report shows — rather than trusting
+    // matchInfo.opponents[].score. That field has been observed unreliable
+    // on matches DC's segments feed has corrupted (a forfeit can cause a
+    // different set's legs to get misfiled into the forfeited set's slot),
+    // and even drifted between successive fetches of the same match. A
+    // forfeit note always overrides that set's outcome: DC's own recorded
+    // legs for a forfeited set can be partial/misfiled leftovers rather
+    // than a real result, so the set is excluded from the leg tally
+    // entirely and the point is credited whole to the non-forfeiting team
+    // (matches DC's own standings figures, verified against real matches).
+    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
+    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
+    const forfeitedSetIndexes = new Map<number, string>(); // set_index -> forfeiting team (lowercased)
+    for (const note of forfeitNotes) {
+      const m = note.match(/^Set #(\d+): .*forfeited by (.+?)\.?$/i);
+      if (!m) continue;
+      forfeitedSetIndexes.set(Number(m[1]), m[2].trim().toLowerCase());
+    }
+
     let homeScore = 0, awayScore = 0;
     const segSets = segmentsMap.get(guid);
     if (segSets) {
       for (const legs of segSets) {
         if (legs.length === 0) continue;
+        const si = legs[0]?.set_index;
+        if (si != null && forfeitedSetIndexes.has(si)) continue;
         const w = setWinner(legs);
         if (w === 0) homeScore++;
         else if (w === 1) awayScore++;
       }
     }
 
-    // Override with authoritative matchInfo scores (includes forfeits)
-    const matchInfo = matchData?.matchInfo;
-    if (matchInfo?.opponents && matchInfo.opponents.length >= 2) {
-      const oppByName = new Map(matchInfo.opponents.map((o) => [o.name, o.score]));
-      const fromHome = oppByName.get(homeTeamNameStr);
-      const fromAway = oppByName.get(awayTeamNameStr);
-      if (fromHome !== undefined && fromAway !== undefined) {
-        homeScore = fromHome;
-        awayScore = fromAway;
-      } else {
-        homeScore = matchInfo.opponents[0].score ?? homeScore;
-        awayScore = matchInfo.opponents[1].score ?? awayScore;
-      }
+    for (const forfeitingTeam of forfeitedSetIndexes.values()) {
+      if (forfeitingTeam === homeTeamNameStr.toLowerCase()) awayScore++;
+      else if (forfeitingTeam === awayTeamNameStr.toLowerCase()) homeScore++;
     }
 
     if (homeScore + awayScore === 0) continue;
+
+    // Sanity check against DC's own reported total_sets — if our derived
+    // total still doesn't line up, something about this match isn't fully
+    // reconciled by the logic above either. Flag it rather than silently
+    // trusting a number we can't verify; keep the derived score anyway
+    // since matchInfo's own total_sets has itself been observed to drift.
+    // Auto-resolve any previously-raised score_mismatch first, regardless of
+    // its exact message — the message embeds the derived score, so a score
+    // that changes between runs (e.g. after this exact bug fix) would
+    // otherwise leave the old-score row stuck open forever, since it's a
+    // different (matchId, type, message) key than the freshly-raised one.
+    await autoResolveAlert(targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch");
+    if (matchInfo?.total_sets != null && homeScore + awayScore !== matchInfo.total_sets) {
+      await raiseAlert(
+        targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch",
+        `${homeTeamNameStr} vs ${awayTeamNameStr}: derived score ${homeScore}-${awayScore} (${homeScore + awayScore} sets) ` +
+        `doesn't match DC's reported total of ${matchInfo.total_sets} sets — this match's DC data may still be inconsistent. Verify manually.`,
+        guid
+      );
+    }
 
     // Determine whether this guid is an extra/duplicate recap for a match
     // that's already claimed by a different guid. matches.id here is DC's
@@ -795,8 +827,7 @@ async function scrapePhase(
     // notes on the match, never attributed to a player. Segments/games data
     // for a forfeited set is simply absent, so player-level stats can't
     // reflect it automatically; an admin can enter a manual adjustment.
-    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
-    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
+    // (noteStrings/forfeitNotes computed earlier, alongside score derivation.)
     if (forfeitNotes.length > 0) {
       for (const note of forfeitNotes) {
         await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${note}`, guid);
