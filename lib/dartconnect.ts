@@ -586,7 +586,10 @@ function normalizeAddress(addr: string): string {
   return addr;
 }
 
-export function decodeHtmlEntities(s: string): string {
+export function decodeHtmlEntities(s: string | null | undefined): string | null | undefined {
+  // DC's declared types lie about nullability here just like team_name does
+  // for BYE slots (team_name: string, but null at runtime) — stay defensive.
+  if (s == null) return s;
   return s
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -632,7 +635,7 @@ export async function fetchTeamVenues(
     }
 
     const raw = await res.text();
-    const html = decodeHtmlEntities(raw);
+    const html = decodeHtmlEntities(raw) ?? "";
 
     // Find all home-team positions — spans with class="truncate" immediately
     // followed by a "(H)" sibling span.

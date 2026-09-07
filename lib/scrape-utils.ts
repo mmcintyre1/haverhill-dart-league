@@ -46,6 +46,17 @@ export function parseDcMatchId(id: number | string | null | undefined): { dcMatc
   return { dcMatchId: null, dcGuid: null };
 }
 
+/** DC's player names sometimes carry irregular internal whitespace in one
+ *  source but not another — e.g. a roster fetch giving "Craig Busteed" while
+ *  a match recap's turn data has "Craig  Busteed" (double space). Since
+ *  player accumulation keys a Map by exact name string, an unnormalized
+ *  mismatch silently drops that player's stats for the match (no error,
+ *  just a quietly-empty record) — normalize every name at the point it's
+ *  read from any DC source so all lookups converge on the same key. */
+export function normalizeName(name: string): string {
+  return name.replace(/\s+/g, " ").trim();
+}
+
 export function guidToFakeId(guid: string): number {
   let h = 0;
   for (const c of guid) {

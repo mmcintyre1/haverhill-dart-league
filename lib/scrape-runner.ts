@@ -1,6 +1,6 @@
 import { eq, and, inArray } from "drizzle-orm";
 import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments } from "./db";
-import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId } from "./scrape-utils";
+import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId, normalizeName } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
 import {
   fetchLeaguePageProps,
@@ -395,7 +395,7 @@ async function scrapePhase(
     const s = p as unknown as Record<string, unknown>;
     const firstName = String(s.player_first_name ?? "").trim();
     const lastName  = String(s.player_last_name  ?? "").trim();
-    const playerName = [firstName, lastName].filter(Boolean).join(" ");
+    const playerName = normalizeName([firstName, lastName].filter(Boolean).join(" "));
     if (!playerName) continue;
     if (!accumByName.has(playerName)) {
       accumByName.set(playerName, emptyAccum(
@@ -428,8 +428,8 @@ async function scrapePhase(
       const awayPlayers = new Set<string>();
       for (const leg of legs) {
         for (const turn of leg.turns ?? []) {
-          if (turn.home?.name) homePlayers.add(turn.home.name);
-          if (turn.away?.name) awayPlayers.add(turn.away.name);
+          if (turn.home?.name) homePlayers.add(normalizeName(turn.home.name));
+          if (turn.away?.name) awayPlayers.add(normalizeName(turn.away.name));
         }
       }
       for (const p of homePlayers) matchHomePlayers.add(p);
@@ -478,7 +478,7 @@ async function scrapePhase(
           for (const side of ["home", "away"] as const) {
             const t = turn[side];
             if (!t?.name) continue;
-            const acc = accumByName.get(t.name);
+            const acc = accumByName.get(normalizeName(t.name));
             if (!acc) continue;
             const is01   = type === "601" || type === "501";
             const isCrkt = type === "crkt";
@@ -569,7 +569,7 @@ async function scrapePhase(
     if (!meta) continue;
     const weekKey = meta.weekKey;
     for (const ps of playerMatchStats) {
-      const acc = accumByName.get(ps.name);
+      const acc = accumByName.get(normalizeName(ps.name));
       if (!acc) continue;
       const w = acc.weekStats.get(weekKey);
       if (w) {
@@ -657,8 +657,8 @@ async function scrapePhase(
     // DC's lineups/history API inconsistently HTML-escapes team names (e.g.
     // "Kings &amp; Queens" some calls, "Kings & Queens" others) — decode
     // defensively so stored names and alert text are always clean.
-    const homeTeamNameStr = decodeHtmlEntities(String(homeComp?.team_name ?? homeComp?.name ?? ""));
-    const awayTeamNameStr = decodeHtmlEntities(String(awayComp?.team_name  ?? awayComp?.name  ?? ""));
+    const homeTeamNameStr = decodeHtmlEntities(String(homeComp?.team_name ?? homeComp?.name ?? "")) ?? "";
+    const awayTeamNameStr = decodeHtmlEntities(String(awayComp?.team_name  ?? awayComp?.name  ?? "")) ?? "";
 
     const matchData = matchDataMap.get(guid);
     const parsedDate = matchData?.schedDate ?? weekKeyToISODate(meta.weekKey);
@@ -824,7 +824,7 @@ async function scrapePhase(
     const s = p as unknown as Record<string, unknown>;
     const firstName = String(s.player_first_name ?? "").trim();
     const lastName  = String(s.player_last_name  ?? "").trim();
-    const playerName = [firstName, lastName].filter(Boolean).join(" ");
+    const playerName = normalizeName([firstName, lastName].filter(Boolean).join(" "));
     if (!playerName) continue;
 
     const dcId     = s.id != null ? String(s.id) : null;
