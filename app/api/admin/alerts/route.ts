@@ -47,6 +47,8 @@ export async function PATCH(req: NextRequest) {
   if (!body.id || typeof body.resolved !== "boolean") {
     return NextResponse.json({ error: "id and resolved are required" }, { status: 400 });
   }
-  await db.update(adminAlerts).set({ resolved: body.resolved }).where(eq(adminAlerts.id, body.id));
+  // Manual toggle always wins over a stale autoResolvedAt from a prior
+  // rescrape — clear it so the UI doesn't misattribute this action.
+  await db.update(adminAlerts).set({ resolved: body.resolved, autoResolvedAt: null }).where(eq(adminAlerts.id, body.id));
   return NextResponse.json({ ok: true });
 }

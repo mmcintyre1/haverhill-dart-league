@@ -1176,6 +1176,7 @@ type Alert = {
   createdAt: string;
   dcGuid: string | null;
   dcGuid2: string | null;
+  autoResolvedAt: string | null;
 };
 
 type AdjPlayer = { id: number; name: string; teamName: string | null };
@@ -1385,6 +1386,19 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
                               </a>
                             )}
                           </div>
+                        )}
+                        {!a.resolved && (
+                          <p className="text-[0.7rem] text-slate-600 mt-1.5">
+                            Fixed in DartConnect? No need to Dismiss — running Data Refresh re-checks this and clears it automatically once it's no longer detected.
+                          </p>
+                        )}
+                        {a.resolved && a.autoResolvedAt && (
+                          <p className="text-[0.7rem] text-emerald-600 mt-1.5">
+                            ✓ Auto-resolved on rescrape · {new Date(a.autoResolvedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          </p>
+                        )}
+                        {a.resolved && !a.autoResolvedAt && (
+                          <p className="text-[0.7rem] text-slate-600 mt-1.5">Manually dismissed</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">

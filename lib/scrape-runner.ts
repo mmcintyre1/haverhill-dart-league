@@ -1,4 +1,4 @@
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments } from "./db";
 import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId, normalizeName } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
@@ -127,7 +127,29 @@ async function raiseAlert(
   await db
     .insert(adminAlerts)
     .values({ seasonId, matchId, type, message, dcGuid: dcGuid ?? null, dcGuid2: dcGuid2 ?? null })
-    .onConflictDoNothing({ target: [adminAlerts.matchId, adminAlerts.type, adminAlerts.message] });
+    .onConflictDoUpdate({
+      target: [adminAlerts.matchId, adminAlerts.type, adminAlerts.message],
+      // Reopen it if this exact issue was previously resolved (auto or
+      // manual) and just recurred — a match rescan finding the same problem
+      // again should never stay silently marked resolved.
+      set: { resolved: false, autoResolvedAt: null },
+    });
+}
+
+/** Auto-resolve any open alert of this (matchId, type) when a rescrape
+ *  re-checks the same condition and it no longer holds — distinct from a
+ *  human clicking Dismiss (autoResolvedAt marks which one happened), so an
+ *  issue that's actually still wrong doesn't just quietly vanish unnoticed. */
+async function autoResolveAlert(seasonId: number, matchId: number | null, type: string) {
+  await db
+    .update(adminAlerts)
+    .set({ resolved: true, autoResolvedAt: new Date() })
+    .where(and(
+      eq(adminAlerts.seasonId, seasonId),
+      matchId != null ? eq(adminAlerts.matchId, matchId) : isNull(adminAlerts.matchId),
+      eq(adminAlerts.type, type),
+      eq(adminAlerts.resolved, false),
+    ));
 }
 
 async function backfillArchivedMetadata(
@@ -529,37 +551,58 @@ async function scrapePhase(
           }
         }
       }
+    }
 
-      const alertMatchId = matchDataMap.get(guid)?.matchInfo?.league_match_id ?? null;
+    // Evaluated once per match, after all its sets are processed — these
+    // checks were previously (wrongly) nested inside the per-set loop above,
+    // which meant they ran against a partially-built accumulator on every
+    // set and could flip-flop between raising and auto-resolving within a
+    // single scrape run.
+    const alertMatchId = matchDataMap.get(guid)?.matchInfo?.league_match_id ?? null;
 
-      // A player can't legitimately appear for both teams in one match — this
-      // is always a DC lineup entry mistake (wrong name assigned to a slot),
-      // not a legal play scenario, so we can flag it with full confidence.
-      const bothSidesPlayers = [...matchHomePlayers].filter((p) => matchAwayPlayers.has(p));
-      if (bothSidesPlayers.length > 0) {
-        await raiseAlert(
-          targetSeasonId, alertMatchId, "player_both_sides",
-          `${homeTeamName} vs ${awayTeamName}: ${bothSidesPlayers.join(", ")} ${bothSidesPlayers.length === 1 ? "is" : "are"} listed playing for both teams — almost certainly a lineup mix-up in DC, not a real result.`,
-          guid
-        );
-      }
+    // A player can't legitimately appear for both teams in one match — this
+    // is always a DC lineup entry mistake (wrong name assigned to a slot),
+    // not a legal play scenario, so we can flag it with full confidence.
+    const bothSidesPlayers = [...matchHomePlayers].filter((p) => matchAwayPlayers.has(p));
+    if (bothSidesPlayers.length > 0) {
+      await raiseAlert(
+        targetSeasonId, alertMatchId, "player_both_sides",
+        `${homeTeamName} vs ${awayTeamName}: ${bothSidesPlayers.join(", ")} ${bothSidesPlayers.length === 1 ? "is" : "are"} listed playing for both teams — almost certainly a lineup mix-up in DC, not a real result.`,
+        guid
+      );
+    } else {
+      await autoResolveAlert(targetSeasonId, alertMatchId, "player_both_sides");
+    }
 
-      // A player may play at most one set of a given game type per match
-      // (cricket, 601, 501 — 0 or 1 times each, never two separate sets).
-      const gameTypeDisplay: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
-      const repeatOffenders: string[] = [];
-      for (const [type, playerCounts] of gameTypeSetsByPlayer) {
-        for (const [player, count] of playerCounts) {
-          if (count > 1) repeatOffenders.push(`${player} (${gameTypeDisplay[type] ?? type} x${count})`);
-        }
+    // A player may play at most one set of a given game type per match
+    // (cricket, 601, 501 — 0 or 1 times each, never two separate sets).
+    const gameTypeDisplay: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
+    const repeatOffenders: string[] = [];
+    for (const [type, playerCounts] of gameTypeSetsByPlayer) {
+      for (const [player, count] of playerCounts) {
+        if (count > 1) repeatOffenders.push(`${player} (${gameTypeDisplay[type] ?? type} x${count})`);
       }
-      if (repeatOffenders.length > 0) {
-        await raiseAlert(
-          targetSeasonId, alertMatchId, "player_repeat_game_type",
-          `${homeTeamName} vs ${awayTeamName}: ${repeatOffenders.join(", ")} played more than one set of the same game type — should be 0 or 1 per game type. Check the lineup in DC.`,
-          guid
-        );
-      }
+    }
+    if (repeatOffenders.length > 0) {
+      // DC's segments feed has been observed corrupting itself around a
+      // forfeit — duplicating a *different* set's players into the
+      // forfeited set's slot, which looks identical to a real repeat.
+      // When this match also has a forfeit note, say so explicitly rather
+      // than confidently pointing at a lineup mistake that isn't real.
+      const hasForfeitNote = [
+        ...(matchDataMap.get(guid)?.matchInfo?.notes?.sets ?? []),
+        ...(matchDataMap.get(guid)?.matchInfo?.notes?.games ?? []),
+      ].some((n) => n && /forfeit/i.test(n));
+      const caveat = hasForfeitNote
+        ? " This match also has a forfeit — DC's data has been seen duplicating a different set's players into the forfeited slot, which can look identical to a real repeat. Verify against DC's own match report/box score before assuming a lineup error."
+        : " Check the lineup in DC.";
+      await raiseAlert(
+        targetSeasonId, alertMatchId, "player_repeat_game_type",
+        `${homeTeamName} vs ${awayTeamName}: ${repeatOffenders.join(", ")} played more than one set of the same game type — should be 0 or 1 per game type.${caveat}`,
+        guid
+      );
+    } else {
+      await autoResolveAlert(targetSeasonId, alertMatchId, "player_repeat_game_type");
     }
   }
 
@@ -646,6 +689,22 @@ async function scrapePhase(
 
   // ── I. Upsert matches ────────────────────────────────────────────────────────
   let matchScoresUpdated = 0;
+
+  // Precompute how many distinct guids claim each real match id (DC's
+  // league_match_id) this run. Duplicate detection must be decided from
+  // this — not by comparing a guid against whatever's already stored on the
+  // row in the DB, which always looks like "not a duplicate" the moment
+  // you're looking at the guid that's already adopted, even when a second,
+  // still-unresolved guid for the same match exists elsewhere in this same
+  // run's matchMeta.
+  const guidsByRealMatchId = new Map<number, string[]>();
+  for (const [g] of matchMeta) {
+    const realId = matchDataMap.get(g)?.matchInfo?.league_match_id;
+    if (realId == null) continue;
+    if (!guidsByRealMatchId.has(realId)) guidsByRealMatchId.set(realId, []);
+    guidsByRealMatchId.get(realId)!.push(g);
+  }
+
   for (const [guid, meta] of matchMeta) {
     if (meta.homeTeamId === "__unknown__" || meta.awayTeamId === "__unknown__") continue;
     const homeSerialId = dcTeamToSerialId.get(parseInt(meta.homeTeamId));
@@ -724,7 +783,13 @@ async function scrapePhase(
         existingScore = { home: existingRow.homeScore ?? 0, away: existingRow.awayScore ?? 0 };
       }
     }
-    const isDuplicateGuid = existingDcGuid != null && existingDcGuid !== guid;
+    // Canonical guid is decided purely from this run's own data (whichever
+    // guid sorts first among all guids claiming this real match id) — not
+    // from comparing against the DB's current dcGuid, which is what caused
+    // the self-comparison bug above.
+    const guidsForThisMatch = realMatchId != null ? guidsByRealMatchId.get(realMatchId) : undefined;
+    const canonicalGuid = guidsForThisMatch && guidsForThisMatch.length > 0 ? [...guidsForThisMatch].sort()[0] : guid;
+    const isDuplicateGuid = canonicalGuid !== guid;
 
     // Flag forfeits for admin review — DC records these only as free-form
     // notes on the match, never attributed to a player. Segments/games data
@@ -736,18 +801,35 @@ async function scrapePhase(
       for (const note of forfeitNotes) {
         await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${note}`, guid);
       }
+    } else {
+      // DC's own notes cleared (or never had one) — if a forfeit was
+      // flagged on a prior scrape and this rescrape doesn't see it anymore,
+      // it's been corrected/removed on DC's side.
+      await autoResolveAlert(targetSeasonId, realMatchId, "forfeit");
     }
 
     if (isDuplicateGuid) {
+      // existingScore/existingDcGuid can still be unset here if this is the
+      // very first scrape to see this match's canonical guid hasn't been
+      // written yet (processing order within this run isn't guaranteed to
+      // match canonical order) — fall back to describing it generically
+      // rather than printing "undefined-undefined".
+      const displayedDesc = existingScore
+        ? `${existingScore.home}-${existingScore.away} (currently displayed on the site)`
+        : `a result DartConnect hasn't finished saving yet`;
       await raiseAlert(
         targetSeasonId, realMatchId, "duplicate_history_entry",
         `${homeTeamNameStr} vs ${awayTeamNameStr}: DartConnect has two separate, unmerged recaps for this match — one shows ` +
-        `${existingScore?.home}-${existingScore?.away} (currently displayed on the site), the other shows ${homeScore}-${awayScore}. ` +
+        `${displayedDesc}, the other shows ${homeScore}-${awayScore}. ` +
         `This usually means the match was exited and resumed as a separate session in DC. Check DartConnect for the real result — ` +
         `the score shown here may not be it until DC merges the recaps.`,
-        existingDcGuid, guid
+        existingDcGuid ?? canonicalGuid, guid
       );
       continue; // don't touch scores or create a row for the extra recap
+    } else {
+      // Only one recap claims this match now — if DC merged a previously
+      // duplicate pair, this rescrape naturally lands here instead.
+      await autoResolveAlert(targetSeasonId, realMatchId, "duplicate_history_entry");
     }
 
     // For REG: update scores on lineup-sourced rows (scores only — dcGuid is set
@@ -1119,6 +1201,8 @@ async function scrapeSeasonStats(
       status = "P";
       homeScore = 0;
       awayScore = 0;
+    } else {
+      await autoResolveAlert(targetSeasonId, m.id, "suspicious_future_result");
     }
 
     // NOTE: dcGuid is intentionally NOT set here. It's captured separately by
@@ -1133,6 +1217,7 @@ async function scrapeSeasonStats(
         .values({ id: m.id, seasonId: targetSeasonId, divisionId: divSerialId, divisionName: divName, roundSeq: m.round_seq, homeTeamId: homeSerialId, awayTeamId: awaySerialId, homeTeamName: decodeHtmlEntities(m.left.team_name), awayTeamName: decodeHtmlEntities(m.right.team_name), schedDate: m.sched_date, schedTime: m.sched_time, status, homeScore, awayScore, dcMatchId, seasonStatus: m.season_status, prettyDate: m.pretty_date })
         .onConflictDoUpdate({ target: matches.id, set: { status, homeScore, awayScore, dcMatchId, schedDate: m.sched_date, schedTime: m.sched_time, prettyDate: m.pretty_date, roundSeq: m.round_seq, divisionName: divName, updatedAt: new Date() } });
       matchesUpdated++;
+      await autoResolveAlert(targetSeasonId, m.id, "match_upsert_error");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       matchUpsertErrors.push(`match ${m.id}: ${msg}`);

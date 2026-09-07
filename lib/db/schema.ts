@@ -287,6 +287,10 @@ export const adminAlerts = pgTable(
     dcGuid: text("dc_guid"),
     dcGuid2: text("dc_guid_2"),
     resolved: boolean("resolved").notNull().default(false),
+    // Set only when a rescrape re-checked this exact issue and found it gone
+    // (as opposed to a human clicking Dismiss) — lets the UI show why an
+    // alert disappeared instead of leaving it ambiguous.
+    autoResolvedAt: timestamp("auto_resolved_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("admin_alerts_dedupe_idx").on(t.matchId, t.type, t.message)]
