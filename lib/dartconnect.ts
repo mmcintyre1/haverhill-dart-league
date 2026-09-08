@@ -686,13 +686,23 @@ export async function fetchTeamVenues(
       if (!venueNameM && !address && !phoneM) continue;
 
       const teamName = homeTeams[i].name;
-      if (result.has(teamName)) continue; // already populated from an earlier match week
-
-      result.set(teamName, {
-        name: venueNameM ? venueNameM[1].trim() : "",
-        address,
-        phone: phoneM ? phoneM[1].trim() : "",
-      });
+      const name = venueNameM ? venueNameM[1].trim() : "";
+      const phone = phoneM ? phoneM[1].trim() : "";
+      const existing = result.get(teamName);
+      if (!existing) {
+        result.set(teamName, { name, address, phone });
+      } else if (!existing.name && name) {
+        // A team's earliest schedule-page occurrence can be missing the
+        // venue-name div even though the address is right there (seen on
+        // real data — DC renders that first card differently). Prefer a
+        // later occurrence's name once we find one instead of getting
+        // stuck on the first, incomplete match forever.
+        result.set(teamName, {
+          name,
+          address: existing.address || address,
+          phone: existing.phone || phone,
+        });
+      }
     }
   } catch (err) {
     console.warn("fetchTeamVenues: failed", err);

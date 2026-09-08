@@ -202,13 +202,13 @@ export default async function TeamsPage({
                           {team.captain && (
                             <span className="text-xs text-slate-500">Capt. {formatCaptainName(team.captain)}</span>
                           )}
-                          {team.venueName && (
+                          {(team.venueName || team.venueAddress) && (
                             <span className="hidden sm:flex items-center gap-1 text-xs text-amber-400">
                               <svg className="shrink-0 text-slate-400" width="9" height="11" viewBox="0 0 24 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M12 2C7.58 2 4 5.58 4 10c0 6.5 8 16 8 16s8-9.5 8-16c0-4.42-3.58-8-8-8z"/>
                                 <circle cx="12" cy="10" r="3"/>
                               </svg>
-                              {team.venueName}
+                              {team.venueName || team.venueAddress}
                             </span>
                           )}
                         </div>
@@ -222,12 +222,14 @@ export default async function TeamsPage({
                       {/* Expanded content */}
                       <div className="pl-10 pr-4 pb-5 pt-3 border-t border-slate-800/60 space-y-5">
                         {/* Venue details */}
-                        {team.venueName && (
+                        {(team.venueName || team.venueAddress) && (
                           <div>
                             <p className="text-[0.65rem] font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Venue</p>
-                            <p className="text-sm text-amber-400 leading-snug">{team.venueName}</p>
+                            {team.venueName && (
+                              <p className="text-sm text-amber-400 leading-snug">{team.venueName}</p>
+                            )}
                             {team.venueAddress && (
-                              <p className="text-xs text-slate-500 mt-0.5">{team.venueAddress}</p>
+                              <p className={team.venueName ? "text-xs text-slate-500 mt-0.5" : "text-sm text-amber-400 leading-snug"}>{team.venueAddress}</p>
                             )}
                             {team.venuePhone && (
                               <a
