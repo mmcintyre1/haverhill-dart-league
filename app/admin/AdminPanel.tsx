@@ -1544,18 +1544,28 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
             ) : (
               <div className="space-y-1.5">
                 {adjustments.map(a => (
-                  <div key={a.id} className="flex items-center justify-between gap-3 rounded border border-slate-800 px-3 py-2 text-sm">
-                    <div className="min-w-0">
-                      <span className="font-medium text-slate-200">{a.playerName}</span>
-                      <span className="text-slate-500"> — {GAME_TYPE_LABELS[a.gameType] ?? a.gameType} {a.phase === "POST" ? "Playoffs" : "Regular"} </span>
-                      {a.weekKey && <span className="text-slate-500">· {a.weekKey} </span>}
-                      <span className={a.winsDelta > 0 ? "text-emerald-400" : "text-slate-400"}>+{a.winsDelta}W</span>{" "}
-                      <span className={a.lossesDelta > 0 ? "text-rose-400" : "text-slate-400"}>+{a.lossesDelta}L</span>
-                      {a.note && <span className="text-slate-500"> · {a.note}</span>}
+                  <div key={a.id} className="rounded border border-slate-800 px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+                        <span className="font-medium text-slate-200">{a.playerName}</span>
+                        <span className="text-xs text-slate-500">
+                          {GAME_TYPE_LABELS[a.gameType] ?? a.gameType} · {a.phase === "POST" ? "Playoffs" : "Regular"}
+                          {a.weekKey && ` · ${a.weekKey}`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {a.winsDelta !== 0 && (
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400">+{a.winsDelta}W</span>
+                        )}
+                        {a.lossesDelta !== 0 && (
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-rose-950/40 text-rose-400">+{a.lossesDelta}L</span>
+                        )}
+                        <button onClick={() => deleteAdjustment(a.id)} className="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                    <button onClick={() => deleteAdjustment(a.id)} className="shrink-0 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
-                      Delete
-                    </button>
+                    {a.note && <p className="text-xs text-slate-500 mt-1 leading-snug">{a.note}</p>}
                   </div>
                 ))}
               </div>
