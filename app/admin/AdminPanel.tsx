@@ -1551,7 +1551,7 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
                       {a.weekKey && <span className="text-slate-500">· {a.weekKey} </span>}
                       <span className={a.winsDelta > 0 ? "text-emerald-400" : "text-slate-400"}>+{a.winsDelta}W</span>{" "}
                       <span className={a.lossesDelta > 0 ? "text-rose-400" : "text-slate-400"}>+{a.lossesDelta}L</span>
-                      {a.note && <span className="text-slate-500 truncate"> · {a.note}</span>}
+                      {a.note && <span className="text-slate-500"> · {a.note}</span>}
                     </div>
                     <button onClick={() => deleteAdjustment(a.id)} className="shrink-0 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
                       Delete

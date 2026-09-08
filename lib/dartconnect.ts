@@ -353,8 +353,15 @@ export interface DCMatchInfo {
   notes?: { sets?: string[] | null; games?: string[] | null } | null;
   opponents: Array<{
     name: string;
-    score: number;       // league points for this match — includes forfeited sets
+    // score/set_wins: a separate DC aggregate that does NOT reflect manual
+    // "Team Points/Division Points" corrections made in DC's admin, and has
+    // been observed to drift/go stale on its own — do not use for the
+    // team's actual score.
+    score: number;
     set_wins: number;
+    // league_points/league_standings_points: the authoritative per-team
+    // standings-points tally — DOES reflect forfeit credit and manual DC
+    // corrections. Use this as the team's score (see scrape-runner.ts).
     league_points: number;
     league_standings_points: number;
   }>;
@@ -384,9 +391,9 @@ function parseSegmentsProp(segments: Record<string, unknown[]> | unknown[] | und
   return setsRaw.map((set) => (Array.isArray(set) ? (set as DCGameLeg[]) : []));
 }
 
-/** Fetch the authoritative match score (and any available round metadata) from
- *  the /matches/ recap endpoint.
- *  matchInfo.opponents[].score is DC-computed and includes forfeited sets.
+/** Fetch match metadata (and any available round metadata) from the /matches/
+ *  recap endpoint. The authoritative team score is matchInfo.opponents[].league_points,
+ *  not .score — see the DCMatchInfo comments.
  *  Also probes several candidate prop locations for round_seq / sched_date.
  *  NOTE: /matches/ segments have a different schema — use fetchGameSegments for player stats. */
 export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {

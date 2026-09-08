@@ -728,17 +728,12 @@ async function scrapePhase(
       : parsedDate != null ? (dateToRoundSeq.get(parsedDate) ?? null)
       : null;
 
-    // Derive the team score from actual per-set leg data — the same thing
-    // DC's own "Match Legs" report shows — rather than trusting
-    // matchInfo.opponents[].score. That field has been observed unreliable
-    // on matches DC's segments feed has corrupted (a forfeit can cause a
-    // different set's legs to get misfiled into the forfeited set's slot),
-    // and even drifted between successive fetches of the same match. A
-    // forfeit note always overrides that set's outcome: DC's own recorded
+    // Reconstruct the team score from actual per-set leg data — the same
+    // thing DC's own "Match Legs" report shows — purely as a cross-check.
+    // A forfeit note always overrides that set's outcome: DC's own recorded
     // legs for a forfeited set can be partial/misfiled leftovers rather
     // than a real result, so the set is excluded from the leg tally
-    // entirely and the point is credited whole to the non-forfeiting team
-    // (matches DC's own standings figures, verified against real matches).
+    // entirely and the point is credited whole to the non-forfeiting team.
     const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
     const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
     const forfeitedSetIndexes = new Map<number, string>(); // set_index -> forfeiting team (lowercased)
@@ -748,7 +743,7 @@ async function scrapePhase(
       forfeitedSetIndexes.set(Number(m[1]), m[2].trim().toLowerCase());
     }
 
-    let homeScore = 0, awayScore = 0;
+    let segHomeScore = 0, segAwayScore = 0;
     const segSets = segmentsMap.get(guid);
     if (segSets) {
       for (const legs of segSets) {
@@ -756,34 +751,48 @@ async function scrapePhase(
         const si = legs[0]?.set_index;
         if (si != null && forfeitedSetIndexes.has(si)) continue;
         const w = setWinner(legs);
-        if (w === 0) homeScore++;
-        else if (w === 1) awayScore++;
+        if (w === 0) segHomeScore++;
+        else if (w === 1) segAwayScore++;
       }
     }
-
     for (const forfeitingTeam of forfeitedSetIndexes.values()) {
-      if (forfeitingTeam === homeTeamNameStr.toLowerCase()) awayScore++;
-      else if (forfeitingTeam === awayTeamNameStr.toLowerCase()) homeScore++;
+      if (forfeitingTeam === homeTeamNameStr.toLowerCase()) segAwayScore++;
+      else if (forfeitingTeam === awayTeamNameStr.toLowerCase()) segHomeScore++;
     }
+
+    // The authoritative team score is matchInfo.opponents[].league_points —
+    // DC's official per-team standings-points tally for this match, which
+    // (confirmed against real corrected matches) reflects both forfeit
+    // credit AND any manual "Team Points/Division Points" correction made
+    // in DC's own admin. opponents[].score/set_wins is a *separate* DC
+    // aggregate that does NOT get updated by those manual corrections and
+    // has been observed to drift/go stale independent of them — do not use
+    // it. Fall back to the segments-derived tally only when league_points
+    // itself is unavailable.
+    const opponents = matchInfo?.opponents ?? [];
+    const homeLabelDecoded = matchInfo?.home_label ? (decodeHtmlEntities(matchInfo.home_label) ?? matchInfo.home_label) : null;
+    const homeOpp = homeLabelDecoded != null ? opponents.find((o) => o.name === homeLabelDecoded) : opponents[0];
+    const awayOpp = homeOpp != null ? opponents.find((o) => o !== homeOpp) : opponents[1];
+    const homeScore = homeOpp?.league_points ?? segHomeScore;
+    const awayScore = awayOpp?.league_points ?? segAwayScore;
 
     if (homeScore + awayScore === 0) continue;
 
-    // Sanity check against DC's own reported total_sets — if our derived
-    // total still doesn't line up, something about this match isn't fully
-    // reconciled by the logic above either. Flag it rather than silently
-    // trusting a number we can't verify; keep the derived score anyway
-    // since matchInfo's own total_sets has itself been observed to drift.
-    // Auto-resolve any previously-raised score_mismatch first, regardless of
-    // its exact message — the message embeds the derived score, so a score
-    // that changes between runs (e.g. after this exact bug fix) would
-    // otherwise leave the old-score row stuck open forever, since it's a
-    // different (matchId, type, message) key than the freshly-raised one.
+    // Cross-check the independently-reconstructed leg tally against DC's
+    // official league_points. Disagreement means either the segments feed
+    // is missing/corrupted data we can't see (e.g. a whole set absent with
+    // no forfeit note, as seen on real matches), or a manual DC-side
+    // correction hasn't been mirrored with a player-level stat correction
+    // yet — worth a human look either way, so keep flagging it even though
+    // the displayed score above already uses the trustworthy source.
     await autoResolveAlert(targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch");
-    if (matchInfo?.total_sets != null && homeScore + awayScore !== matchInfo.total_sets) {
+    if (homeOpp?.league_points != null && awayOpp?.league_points != null &&
+        (segHomeScore !== homeOpp.league_points || segAwayScore !== awayOpp.league_points)) {
       await raiseAlert(
         targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch",
-        `${homeTeamNameStr} vs ${awayTeamNameStr}: derived score ${homeScore}-${awayScore} (${homeScore + awayScore} sets) ` +
-        `doesn't match DC's reported total of ${matchInfo.total_sets} sets — this match's DC data may still be inconsistent. Verify manually.`,
+        `${homeTeamNameStr} vs ${awayTeamNameStr}: leg-by-leg tally ${segHomeScore}-${segAwayScore} doesn't match DC's official ` +
+        `league points ${homeOpp.league_points}-${awayOpp.league_points} — this match's segments data may be incomplete or a ` +
+        `manual DC correction may need a matching player-level correction here too. Verify manually.`,
         guid
       );
     }
