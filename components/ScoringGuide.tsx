@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ScoringPts } from "@/app/leaderboard/page";
+import type { ScoringPts } from "@/app/leaderboard/data";
 
 // Mirrors the defaults in leaderboard/page.tsx
 const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {

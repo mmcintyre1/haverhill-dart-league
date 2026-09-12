@@ -2,14 +2,26 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function PhaseSelector({ current }: { current: string }) {
+// basePath/seasonId always target the explicit [seasonId] route — even when
+// filtering the currently-active season — so the bare basePath page (no
+// season/division/phase in the URL) can stay a plain Server Component with
+// no searchParams reads and be eligible for real static/ISR caching.
+export default function PhaseSelector({
+  current,
+  basePath,
+  seasonId,
+}: {
+  current: string;
+  basePath: string;
+  seasonId: number;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("phase", e.target.value);
-    router.push(`?${params.toString()}`);
+    router.push(`${basePath}/${seasonId}?${params.toString()}`);
   }
 
   return (

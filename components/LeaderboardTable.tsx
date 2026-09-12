@@ -69,7 +69,7 @@ function numericSort(a: LeaderboardRow, b: LeaderboardRow, key: SortKey, dir: 1 
   return (bv - av) * dir;
 }
 
-import type { ScoringPts } from "@/app/leaderboard/page";
+import type { ScoringPts } from "@/app/leaderboard/data";
 
 function parseRecord(s: string | null): { w: number; l: number } {
   if (!s) return { w: 0, l: 0 };
@@ -130,18 +130,30 @@ function StatLine({
   );
 }
 
+// Season/phase browsing lives at /leaderboard/[seasonId] (and, for a
+// player, /players/[id]/[seasonId]) — but the common case (current season,
+// REG phase) should link to the bare, static /players/[id] page instead of
+// the dynamic season-scoped route. See lib/cache.ts for background.
+function playerHref(playerId: number, seasonId: number | undefined, phase: string | undefined, isActiveSeason: boolean | undefined): string {
+  if (isActiveSeason || seasonId == null) return `/players/${playerId}`;
+  const qs = phase && phase !== "REG" ? `?phase=${phase}` : "";
+  return `/players/${playerId}/${seasonId}${qs}`;
+}
+
 function MobileCard({
   row,
   idx,
   sp,
   seasonId,
   phase,
+  isActiveSeason,
 }: {
   row: LeaderboardRow;
   idx: number;
   sp: ScoringPts;
   seasonId?: number;
   phase?: string;
+  isActiveSeason?: boolean;
 }) {
   const customAvg = computeCustomAvg(row, sp);
   const customPts = computeCustomPts(row, sp);
@@ -158,11 +170,7 @@ function MobileCard({
         : customPts.toFixed(1)
       : String(row.pts ?? "—");
 
-  const href = `/players/${row.id}${seasonId ? `?season=${seasonId}` : ""}${
-    phase && phase !== "REG"
-      ? `${seasonId ? "&" : "?"}phase=${phase}`
-      : ""
-  }`;
+  const href = playerHref(row.id, seasonId, phase, isActiveSeason);
 
   const records: [string, string | null][] = [
     ["CRKT", row.crkt],
@@ -254,11 +262,13 @@ export default function LeaderboardTable({
   seasonId,
   phase,
   scoringPts,
+  isActiveSeason,
 }: {
   rows: LeaderboardRow[];
   seasonId?: number;
   phase?: string;
   scoringPts?: ScoringPts;
+  isActiveSeason?: boolean;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("pts");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -417,6 +427,7 @@ export default function LeaderboardTable({
             sp={sp}
             seasonId={seasonId}
             phase={phase}
+            isActiveSeason={isActiveSeason}
           />
         ))}
       </div>
@@ -482,7 +493,7 @@ export default function LeaderboardTable({
                   <td className="px-2 py-1.5 text-center text-slate-500 tabular-nums text-xs">{row.pos ?? i + 1}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <Link
-                      href={`/players/${row.id}${seasonId ? `?season=${seasonId}` : ""}${phase && phase !== "REG" ? `${seasonId ? "&" : "?"}phase=${phase}` : ""}`}
+                      href={playerHref(row.id, seasonId, phase, isActiveSeason)}
                       className="font-semibold text-slate-100 hover:text-amber-400 transition-colors"
                     >
                       {row.playerName}

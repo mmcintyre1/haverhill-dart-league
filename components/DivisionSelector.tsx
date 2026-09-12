@@ -2,12 +2,20 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 
+// basePath/seasonId always target the explicit [seasonId] route — even when
+// filtering the currently-active season — so the bare basePath page (no
+// season/division/phase in the URL) can stay a plain Server Component with
+// no searchParams reads and be eligible for real static/ISR caching.
 export default function DivisionSelector({
   divisions,
   current,
+  basePath,
+  seasonId,
 }: {
   divisions: string[];
   current: string; // "all" or a division name
+  basePath: string;
+  seasonId: number;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -19,7 +27,8 @@ export default function DivisionSelector({
     } else {
       params.set("division", e.target.value);
     }
-    router.push(`?${params.toString()}`);
+    const qs = params.toString();
+    router.push(`${basePath}/${seasonId}${qs ? `?${qs}` : ""}`);
   }
 
   return (

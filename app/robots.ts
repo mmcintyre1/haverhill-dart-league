@@ -1,19 +1,19 @@
 import type { MetadataRoute } from "next";
 
-// /players/[id], /leaderboard, /matches, /standings, and /teams all read
-// searchParams for their season/division/phase selectors, which forces
-// Next.js to render them fully dynamically — every crawl of these pages is
-// a full DB-querying serverless invocation, and /players/[id] alone is
-// ~240 pages. Blocking crawlers from them keeps that traffic off the
-// Netlify invocation budget; none of this content is meant to rank in
-// search anyway. The homepage, /about, and /documents stay crawlable —
-// they're already static/ISR-cached and cheap to serve.
+// Bare /leaderboard, /matches, /standings, /teams, and every /players/[id]
+// page are now static/ISR-cached (they never read searchParams — season
+// selection moved to a route segment), so crawling them no longer costs a
+// DB-querying serverless invocation. /teams/[seasonId] is static too (teams
+// has no division/phase filter). /leaderboard/[seasonId], /matches/[seasonId],
+// /standings/[seasonId], and /players/[id]/[seasonId] still read
+// searchParams for division/phase filters and stay fully dynamic, so those
+// are the only paths still worth keeping crawlers off of — that content
+// isn't meant to rank in search separately from the bare pages anyway.
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
-      allow: ["/", "/about", "/documents"],
-      disallow: ["/players/", "/leaderboard", "/matches", "/standings", "/teams", "/admin", "/api/"],
+      disallow: ["/leaderboard/", "/matches/", "/standings/", "/players/*/", "/admin", "/api/"],
     },
   };
 }

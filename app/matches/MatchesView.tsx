@@ -1,0 +1,377 @@
+import { Suspense } from "react";
+import SeasonSelector, { type SeasonOption } from "@/components/SeasonSelector";
+import DivisionSelector from "@/components/DivisionSelector";
+import VenueToggle from "@/components/VenueToggle";
+import { formatShortDate } from "@/lib/format";
+import { dcRecapUrl } from "@/lib/dartconnect";
+import { getAllMatches, getDivisionsForSeason } from "./data";
+
+function formatTime(t: string | null) {
+  if (!t) return "";
+  const [h, m] = t.split(":");
+  const hour = parseInt(h);
+  const ampm = hour >= 12 ? "PM" : "AM";
+  const h12 = hour % 12 || 12;
+  return `${h12}:${m} ${ampm}`;
+}
+
+function groupByRound<T extends { roundSeq: number | null; schedDate: string | null }>(items: T[]) {
+  const map = new Map<string, { round: number | null; matches: T[] }>();
+  for (const m of items) {
+    // Primary key: roundSeq. Fallback: schedDate (past seasons without round numbers).
+    const key = m.roundSeq != null ? `r:${m.roundSeq}:${m.schedDate ?? ""}` : `d:${m.schedDate ?? "unknown"}`;
+    if (!map.has(key)) map.set(key, { round: m.roundSeq, matches: [] });
+    map.get(key)!.matches.push(m);
+  }
+  return Array.from(map.values());
+}
+
+// Shared render for both the bare (static, current-season) page and the
+// explicit /matches/[seasonId] (dynamic) page.
+export default async function MatchesView({
+  basePath,
+  allSeasons,
+  activeId,
+  divisionFilter,
+}: {
+  basePath: string;
+  allSeasons: { id: number; name: string }[];
+  activeId: number | undefined;
+  divisionFilter: string | null;
+}) {
+  if (!activeId) {
+    return (
+      <div className="py-16 text-center text-slate-400">
+        <p className="font-medium">No season found</p>
+        <p className="text-sm mt-1">Run a data refresh to load matches.</p>
+      </div>
+    );
+  }
+
+  const [allMatches, divisionList] = await Promise.all([
+    getAllMatches(activeId),
+    getDivisionsForSeason(activeId),
+  ]);
+
+  const filtered = divisionFilter
+    ? allMatches.filter((m) => m.divisionName === divisionFilter)
+    : allMatches;
+
+  // Treat a match as completed if: status=C, or has non-zero scores,
+  // or its scheduled date is strictly before today (handles unscored played rounds).
+  // Compare ISO date strings directly to avoid local-timezone vs UTC-midnight mismatches.
+  const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD" UTC
+
+  const isComplete = (m: (typeof filtered)[0]) =>
+    m.status === "C" ||
+    (m.homeScore ?? 0) + (m.awayScore ?? 0) > 0 ||
+    (m.schedDate != null && m.schedDate < todayStr);
+
+  const completed = filtered.filter(isComplete);
+  const pending = filtered.filter((m) => !isComplete(m));
+
+  const sortAsc = (a: { matches: { schedDate: string | null }[] }, b: { matches: { schedDate: string | null }[] }) =>
+    (a.matches[0]?.schedDate ?? "").localeCompare(b.matches[0]?.schedDate ?? "");
+  const sortDesc = (a: { matches: { schedDate: string | null }[] }, b: { matches: { schedDate: string | null }[] }) =>
+    (b.matches[0]?.schedDate ?? "").localeCompare(a.matches[0]?.schedDate ?? "");
+
+  const regPending = pending.filter((m) => m.seasonStatus !== "POST");
+  const postPending = pending.filter((m) => m.seasonStatus === "POST");
+  const regCompleted = completed.filter((m) => m.seasonStatus !== "POST");
+  const postCompleted = completed.filter((m) => m.seasonStatus === "POST");
+
+  const upcomingRegRounds = groupByRound(regPending).sort(sortAsc);
+  const upcomingPostRounds = groupByRound(postPending).sort(sortAsc);
+  const resultsPostRounds = groupByRound(postCompleted).sort(sortDesc);
+  const resultsRegRounds = groupByRound(regCompleted).sort(sortDesc);
+
+  const seasonOptions: SeasonOption[] = allSeasons.map((s) => ({ id: s.id, name: s.name }));
+  const activeSeason = allSeasons.find((s) => s.id === activeId);
+
+  return (
+    <div className="space-y-10">
+      {/* ── Filter bar ── */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Suspense fallback={null}>
+          <SeasonSelector seasons={seasonOptions} currentId={activeId} basePath={basePath} />
+        </Suspense>
+        {divisionList.length > 1 && (
+          <Suspense fallback={null}>
+            <DivisionSelector divisions={divisionList} current={divisionFilter ?? "all"} basePath={basePath} seasonId={activeId} />
+          </Suspense>
+        )}
+      </div>
+
+      {/* ── Upcoming ── */}
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-100">
+            Upcoming — {activeSeason?.name}
+          </h2>
+          <span className="text-sm text-slate-400">{pending.length} matches remaining</span>
+        </div>
+
+        {pending.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-700 py-10 text-center text-slate-500">
+            <p className="text-3xl mb-3 select-none">◎</p>
+            <p className="font-medium">No upcoming matches.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {upcomingRegRounds.map(({ round, matches: ms }) => {
+              const first = ms[0];
+              const timeStr = formatTime(first?.schedTime ?? null);
+              const label = formatShortDate(first?.schedDate);
+              return (
+                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                  {/* Round header */}
+                  <div className="bg-slate-800 px-4 py-2 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-200">{label}</span>
+                    {timeStr && (
+                      <span className="shrink-0 text-xs text-slate-400 bg-slate-700/60 border border-slate-600/50 rounded px-2 py-0.5">
+                        {timeStr}
+                      </span>
+                    )}
+                  </div>
+                  {/* Match rows */}
+                  <div className="divide-y divide-slate-700/50">
+                    {ms.map((m) => (
+                      <div
+                        key={m.id}
+                        className="bg-slate-900 hover:bg-slate-800/60 transition-colors px-4 py-2.5 flex items-center text-sm"
+                      >
+                        {/* Division badge */}
+                        <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
+                        {/* Away team — capped width, right-aligned into the @ */}
+                        <span className={`flex-1 min-w-0 max-w-[220px] font-medium text-right truncate pr-1 ${m.awayTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                          {m.awayTeamName || "BYE"}
+                        </span>
+                        {/* @ separator */}
+                        <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                        {/* Home team — capped width, left-aligned away from the @ */}
+                        <span className={`flex-1 min-w-0 max-w-[220px] font-medium truncate pl-1 ${m.homeTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>
+                          {m.homeTeamName || "BYE"}
+                        </span>
+                        {/* Venue — flex-1 so it absorbs leftover space from capped team columns */}
+                        <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
+                          {m.homeTeamVenueName && (
+                            <VenueToggle
+                              name={m.homeTeamVenueName}
+                              address={m.homeTeamVenueAddress}
+                              phone={m.homeTeamVenuePhone}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {upcomingPostRounds.length > 0 && (
+              <>
+                <div className="flex items-center gap-4 py-1">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
+                {upcomingPostRounds.map(({ round, matches: ms }) => {
+                  const first = ms[0];
+                  const timeStr = formatTime(first?.schedTime ?? null);
+                  const label = formatShortDate(first?.schedDate);
+                  return (
+                    <div key={`post-${round ?? first?.schedDate}`} className="rounded-lg border border-amber-900/40 overflow-hidden shadow-xl">
+                      <div className="bg-slate-800 px-4 py-2 flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-slate-200">{label}</span>
+                        {timeStr && (
+                          <span className="shrink-0 text-xs text-slate-400 bg-slate-700/60 border border-slate-600/50 rounded px-2 py-0.5">
+                            {timeStr}
+                          </span>
+                        )}
+                      </div>
+                      <div className="divide-y divide-slate-700/50">
+                        {ms.map((m) => (
+                          <div key={m.id} className="bg-slate-900 hover:bg-slate-800/60 transition-colors px-4 py-2.5 flex items-center text-sm">
+                            <span className="w-5 shrink-0 text-xs text-slate-600">{m.divisionName ?? ""}</span>
+                            <span className={`flex-1 min-w-0 max-w-[220px] font-medium text-right truncate pr-1 ${m.awayTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>{m.awayTeamName || "BYE"}</span>
+                            <span className="w-8 shrink-0 text-center text-slate-600 text-xs font-semibold">@</span>
+                            <span className={`flex-1 min-w-0 max-w-[220px] font-medium truncate pl-1 ${m.homeTeamName ? "text-slate-200" : "text-slate-600 italic"}`}>{m.homeTeamName || "BYE"}</span>
+                            <div className="hidden sm:flex flex-1 min-w-[180px] ml-3 pl-3 border-l border-slate-700/60 min-w-0">
+                              {m.homeTeamVenueName && (
+                                <VenueToggle name={m.homeTeamVenueName} address={m.homeTeamVenueAddress} phone={m.homeTeamVenuePhone} />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Divider ── */}
+      {completed.length > 0 && (
+        <div className="flex items-center gap-4">
+          <div className="flex-1 h-px bg-slate-800" />
+          <span className="text-xs uppercase tracking-widest text-slate-600 shrink-0">Results</span>
+          <div className="flex-1 h-px bg-slate-800" />
+        </div>
+      )}
+
+      {/* ── Results ── */}
+      {completed.length > 0 && (
+        <div>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-100">
+              Results — {activeSeason?.name}
+            </h2>
+            <span className="text-sm text-slate-400">{completed.length} matches played</span>
+          </div>
+
+          <div className="space-y-4">
+            {resultsPostRounds.length > 0 && (
+              <>
+                <div className="flex items-center gap-4 py-1">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span className="text-xs uppercase tracking-widest text-amber-600 shrink-0 font-semibold">Playoffs</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
+                {resultsPostRounds.map(({ round, matches: ms }) => {
+                  const first = ms[0];
+                  const label = formatShortDate(first?.schedDate);
+                  return (
+                    <div key={`post-${round ?? first?.schedDate}`} className="rounded-lg border border-amber-900/40 overflow-hidden shadow-xl">
+                      <div className="bg-slate-800 px-4 py-2">
+                        <span className="text-sm font-semibold text-slate-200">{label}</span>
+                      </div>
+                      <table className="w-full table-fixed text-sm border-collapse">
+                        <colgroup><col className="w-8" /><col /><col className="w-20" /><col /></colgroup>
+                        <tbody>
+                          {ms.map((m) => {
+                            const hs = m.homeScore ?? 0;
+                            const as_ = m.awayScore ?? 0;
+                            const scored = hs + as_ > 0;
+                            const hw = hs > as_;
+                            const aw = as_ > hs;
+                            return (
+                              <tr key={m.id} className="border-t border-slate-700/50 bg-slate-900 hover:bg-slate-800/60 transition-colors">
+                                <td className="pl-3 py-2.5 text-xs text-slate-500">{m.divisionName ?? ""}</td>
+                                <td className={`px-2 py-2.5 text-right truncate ${hw ? "text-white font-semibold" : "text-slate-400"}`}>{m.homeTeamName}</td>
+                                <td className="py-2.5 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    {scored ? <span className="font-bold tabular-nums text-slate-200">{hs} – {as_}</span> : <span className="text-slate-600 text-xs">—</span>}
+                                    {m.dcGuid && (
+                                      <a href={dcRecapUrl(m.dcGuid)} target="_blank" rel="noopener noreferrer" aria-label="View on DartConnect" className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
+                                      </a>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className={`px-2 pr-3 py-2.5 truncate ${aw ? "text-white font-semibold" : "text-slate-400"}`}>{m.awayTeamName}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+            {resultsPostRounds.length > 0 && resultsRegRounds.length > 0 && (
+              <div className="flex items-center gap-4 py-1">
+                <div className="flex-1 h-px bg-slate-800" />
+                <span className="text-xs uppercase tracking-widest text-slate-500 shrink-0 font-semibold">Regular Season</span>
+                <div className="flex-1 h-px bg-slate-800" />
+              </div>
+            )}
+            {resultsRegRounds.map(({ round, matches: ms }) => {
+              const first = ms[0];
+              const label = formatShortDate(first?.schedDate);
+              return (
+                <div key={round ?? first?.schedDate} className="rounded-lg border border-slate-700 overflow-hidden shadow-xl">
+                  <div className="bg-slate-800 px-4 py-2">
+                    <span className="text-sm font-semibold text-slate-200">
+                      {label}
+                    </span>
+                  </div>
+                  <table className="w-full table-fixed text-sm border-collapse">
+                    <colgroup>
+                      <col className="w-8" />
+                      <col />
+                      <col className="w-20" />
+                      <col />
+                    </colgroup>
+                    <tbody>
+                      {ms.map((m) => {
+                        const hs = m.homeScore ?? 0;
+                        const as_ = m.awayScore ?? 0;
+                        const scored = hs + as_ > 0;
+                        const hw = hs > as_;
+                        const aw = as_ > hs;
+                        return (
+                          <tr
+                            key={m.id}
+                            className="border-t border-slate-700/50 bg-slate-900 hover:bg-slate-800/60 transition-colors"
+                          >
+                            <td className="pl-3 py-2.5 text-xs text-slate-500">
+                              {m.divisionName ?? ""}
+                            </td>
+                            <td
+                              className={`px-2 py-2.5 text-right truncate ${
+                                hw ? "text-white font-semibold" : "text-slate-400"
+                              }`}
+                            >
+                              {m.homeTeamName}
+                            </td>
+                            <td className="py-2.5 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {scored ? (
+                                  <span className="font-bold tabular-nums text-slate-200">
+                                    {hs} – {as_}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 text-xs">—</span>
+                                )}
+                                {m.dcGuid && (
+                                  <a
+                                    href={dcRecapUrl(m.dcGuid)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="View on DartConnect"
+                                    className="text-red-700 hover:text-red-500 transition-colors inline-flex items-center shrink-0"
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                      <circle cx="12" cy="12" r="10"/>
+                                      <circle cx="12" cy="12" r="5"/>
+                                      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                                    </svg>
+                                  </a>
+                                )}
+                              </div>
+                            </td>
+                            <td
+                              className={`px-2 pr-3 py-2.5 truncate ${
+                                aw ? "text-white font-semibold" : "text-slate-400"
+                              }`}
+                            >
+                              {m.awayTeamName}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
