@@ -6,6 +6,7 @@ import SeasonSelector from "@/components/SeasonSelector";
 import PhaseSelector from "@/components/PhaseSelector";
 import { formatShortDate } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
+import { cached } from "@/lib/cache";
 
 export const revalidate = 86400;
 
@@ -14,7 +15,12 @@ export async function generateStaticParams() {
   return rows.map((p) => ({ id: String(p.id) }));
 }
 
-async function getSeasons(playerId: number) {
+// This page reads `searchParams` (season/phase selectors), which forces
+// Next.js to render it fully dynamically on every request — `revalidate`
+// above never actually applies to the route, and generateStaticParams above
+// never gets to pre-render anything either. These fetch functions are
+// wrapped in Next's data cache instead — see lib/cache.ts.
+const getSeasons = cached(async (playerId: number) => {
   return db
     .selectDistinct({
       id: seasons.id,
@@ -29,9 +35,9 @@ async function getSeasons(playerId: number) {
     .innerJoin(playerStats, eq(playerStats.seasonId, seasons.id))
     .where(and(eq(seasons.visible, true), eq(playerStats.playerId, playerId)))
     .orderBy(desc(seasons.startDate));
-}
+}, ["players:getSeasons"]);
 
-async function getPlayerHeader(playerId: number, seasonId: number, phase: string) {
+const getPlayerHeader = cached(async (playerId: number, seasonId: number, phase: string) => {
   const [player] = await db
     .select({ name: players.name })
     .from(players)
@@ -65,26 +71,29 @@ async function getPlayerHeader(playerId: number, seasonId: number, phase: string
     .limit(1);
 
   return { player, stat };
-}
+}, ["players:getPlayerHeader"]);
 
-async function hasPlayerPostseason(playerId: number, seasonId: number): Promise<boolean> {
+const hasPlayerPostseason = cached(async (playerId: number, seasonId: number): Promise<boolean> => {
   const [row] = await db
     .select({ id: playerStats.id })
     .from(playerStats)
     .where(and(eq(playerStats.playerId, playerId), eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "POST")))
     .limit(1);
   return !!row;
-}
+}, ["players:hasPlayerPostseason"]);
 
-async function getWeeklyRows(playerId: number, seasonId: number, phase: string) {
+const getWeeklyRows = cached(async (playerId: number, seasonId: number, phase: string) => {
   return db
     .select()
     .from(playerWeekStats)
     .where(and(eq(playerWeekStats.playerId, playerId), eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase)))
     .orderBy(asc(playerWeekStats.weekKey));
-}
+}, ["players:getWeeklyRows"]);
 
-async function getMatchGuidMap(seasonId: number, teamId: number): Promise<Map<string, string>> {
+// Returns a plain object, not a Map — unstable_cache requires JSON-serializable
+// return values, and a Map silently turns into a plain object on a cache hit
+// anyway. Callers build a Map from this where needed.
+const getMatchGuidMap = cached(async (seasonId: number, teamId: number): Promise<Record<string, string>> => {
   const rows = await db
     .select({ prettyDate: matches.prettyDate, dcGuid: matches.dcGuid })
     .from(matches)
@@ -94,12 +103,12 @@ async function getMatchGuidMap(seasonId: number, teamId: number): Promise<Map<st
       isNotNull(matches.dcGuid),
       isNotNull(matches.prettyDate)
     ));
-  const map = new Map<string, string>();
+  const map: Record<string, string> = {};
   for (const r of rows) {
-    if (r.prettyDate && r.dcGuid) map.set(r.prettyDate, r.dcGuid);
+    if (r.prettyDate && r.dcGuid) map[r.prettyDate] = r.dcGuid;
   }
   return map;
-}
+}, ["players:getMatchGuidMap"]);
 
 
 const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
@@ -109,7 +118,7 @@ const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
   D: { hh: 400, roHh: 12 },
 };
 
-async function getHhThresholds(seasonId: number): Promise<Record<string, { hh: number; roHh: number }>> {
+const getHhThresholds = cached(async (seasonId: number): Promise<Record<string, { hh: number; roHh: number }>> => {
   const rows = await db
     .select()
     .from(scoringConfig)
@@ -129,9 +138,9 @@ async function getHhThresholds(seasonId: number): Promise<Record<string, { hh: n
     if (r.key === "ro_hh.threshold") result[div].roHh = Number(r.value);
   }
   return result;
-}
+}, ["players:getHhThresholds"]);
 
-async function getScoringPts(seasonId: number): Promise<{ cricket: number; "601": number; "501": number }> {
+const getScoringPts = cached(async (seasonId: number): Promise<{ cricket: number; "601": number; "501": number }> => {
   const rows = await db
     .select()
     .from(scoringConfig)
@@ -150,7 +159,7 @@ async function getScoringPts(seasonId: number): Promise<{ cricket: number; "601"
     if (r.key === "501.win_pts")     pts["501"]   = Number(r.value);
   }
   return pts;
-}
+}, ["players:getScoringPts"]);
 
 function parseRecord(s: string | null | undefined): { w: number; l: number } {
   if (!s) return { w: 0, l: 0 };
@@ -218,7 +227,7 @@ export default async function PlayerPage({
   ]);
 
   const matchGuidMap = stat?.teamId
-    ? await getMatchGuidMap(activeId, stat.teamId)
+    ? new Map(Object.entries(await getMatchGuidMap(activeId, stat.teamId)))
     : new Map<string, string>();
 
   if (!player) {

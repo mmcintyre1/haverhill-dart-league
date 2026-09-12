@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { PUBLIC_DATA_TAG } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ export async function POST(req: NextRequest) {
   }
 
   revalidatePath("/", "layout"); // busts all pages that share the root layout
+  revalidateTag(PUBLIC_DATA_TAG, "max"); // busts the data-cache entries pages read via unstable_cache
 
   return NextResponse.json({ ok: true, revalidated: true });
 }

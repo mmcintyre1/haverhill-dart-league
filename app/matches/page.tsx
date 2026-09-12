@@ -8,23 +8,28 @@ import DivisionSelector from "@/components/DivisionSelector";
 import VenueToggle from "@/components/VenueToggle";
 import { formatShortDate } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
+import { cached } from "@/lib/cache";
 
 export const revalidate = 86400;
 
-async function getSeasons() {
+// This page reads `searchParams` (season/division selectors), which forces
+// Next.js to render it fully dynamically on every request — `revalidate`
+// above never actually applies to the route. These fetch functions are
+// wrapped in Next's data cache instead — see lib/cache.ts.
+const getSeasons = cached(async () => {
   return db.select().from(seasons).where(eq(seasons.visible, true)).orderBy(desc(seasons.startDate));
-}
+}, ["matches:getSeasons"]);
 
-async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
+const getDivisionsForSeason = cached(async (seasonId: number): Promise<string[]> => {
   const rows = await db
     .selectDistinct({ name: divisions.name })
     .from(divisions)
     .where(eq(divisions.seasonId, seasonId))
     .orderBy(asc(divisions.name));
   return rows.map((r) => r.name).filter(Boolean) as string[];
-}
+}, ["matches:getDivisionsForSeason"]);
 
-async function getAllMatches(seasonId: number) {
+const getAllMatches = cached(async (seasonId: number) => {
   const homeTeams = alias(teams, "home_teams");
   return db
     .select({
@@ -52,7 +57,7 @@ async function getAllMatches(seasonId: number) {
     .leftJoin(homeTeams, eq(matches.homeTeamId, homeTeams.id))
     .where(eq(matches.seasonId, seasonId))
     .orderBy(asc(matches.roundSeq), asc(matches.divisionName), asc(matches.schedDate), asc(matches.schedTime));
-}
+}, ["matches:getAllMatches"]);
 
 function formatTime(t: string | null) {
   if (!t) return "";

@@ -7,14 +7,19 @@ import SeasonSelector from "@/components/SeasonSelector";
 import { groupTeamSchedule, type ScheduleMatch } from "@/lib/schedule";
 import { formatShortDate, formatCaptainName } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
+import { cached } from "@/lib/cache";
 
 export const revalidate = 86400;
 
-async function getSeasons() {
+// This page reads `searchParams` (season selector), which forces Next.js to
+// render it fully dynamically on every request — `revalidate` above never
+// actually applies to the route. These fetch functions are wrapped in
+// Next's data cache instead — see lib/cache.ts.
+const getSeasons = cached(async () => {
   return db.select().from(seasons).where(eq(seasons.visible, true)).orderBy(desc(seasons.startDate));
-}
+}, ["teams:getSeasons"]);
 
-async function getTeamData(seasonId: number) {
+const getTeamData = cached(async (seasonId: number) => {
   const rows = await db
     .select({
       teamId: teams.id,
@@ -73,9 +78,12 @@ async function getTeamData(seasonId: number) {
   }
 
   return Array.from(divisionGroups.entries()).sort(([a], [b]) => a.localeCompare(b));
-}
+}, ["teams:getTeamData"]);
 
-async function getScheduleByTeam(seasonId: number): Promise<Map<number, ScheduleMatch[]>> {
+// Returns an array of entries, not a Map — unstable_cache requires
+// JSON-serializable return values, and a Map silently turns into a plain
+// object on a cache hit anyway. The caller rebuilds a Map from this.
+const getScheduleByTeam = cached(async (seasonId: number): Promise<Array<[number, ScheduleMatch[]]>> => {
   // Join home team for venue name
   const homeTeams = alias(teams, "homeTeam");
   const rows = await db
@@ -124,8 +132,8 @@ async function getScheduleByTeam(seasonId: number): Promise<Map<number, Schedule
       map.get(row.awayTeamId)!.push(m);
     }
   }
-  return map;
-}
+  return Array.from(map.entries());
+}, ["teams:getScheduleByTeam"]);
 
 export default async function TeamsPage({
   searchParams,
@@ -149,10 +157,11 @@ export default async function TeamsPage({
     );
   }
 
-  const [divisionGroups, scheduleByTeam] = await Promise.all([
+  const [divisionGroups, scheduleByTeamEntries] = await Promise.all([
     getTeamData(activeId),
     getScheduleByTeam(activeId),
   ]);
+  const scheduleByTeam = new Map(scheduleByTeamEntries);
 
   const seasonOptions = allSeasons.map((s) => ({ id: s.id, name: s.name }));
   const hasAnyTeams = divisionGroups.some(([, ts]) => ts.length > 0);

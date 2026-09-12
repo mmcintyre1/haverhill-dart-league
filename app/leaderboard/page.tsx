@@ -7,36 +7,43 @@ import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import PhaseSelector from "@/components/PhaseSelector";
 import ScoringGuide from "@/components/ScoringGuide";
+import { cached } from "@/lib/cache";
 
 export const revalidate = 86400;
 
-async function getSeasons() {
+// This page reads `searchParams` (season/division/phase selectors), which
+// forces Next.js to render it fully dynamically on every request — the
+// `revalidate` export above never actually applies to the route itself.
+// These fetch functions are wrapped in Next's data cache instead, so repeat
+// requests for the same season/phase/division skip the DB entirely until a
+// scrape busts the "public-data" tag (see /api/revalidate).
+const getSeasons = cached(async () => {
   return db.select().from(seasons).where(eq(seasons.visible, true)).orderBy(desc(seasons.startDate));
-}
+}, ["leaderboard:getSeasons"]);
 
-async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
+const getDivisionsForSeason = cached(async (seasonId: number): Promise<string[]> => {
   const rows = await db
     .selectDistinct({ name: divisions.name })
     .from(divisions)
     .where(eq(divisions.seasonId, seasonId))
     .orderBy(asc(divisions.name));
   return rows.map((r) => r.name).filter(Boolean) as string[];
-}
+}, ["leaderboard:getDivisionsForSeason"]);
 
-async function hasPostseason(seasonId: number): Promise<boolean> {
+const hasPostseason = cached(async (seasonId: number): Promise<boolean> => {
   const [row] = await db
     .select({ id: playerStats.id })
     .from(playerStats)
     .where(and(eq(playerStats.seasonId, seasonId), eq(playerStats.phase, "POST")))
     .limit(1);
   return !!row;
-}
+}, ["leaderboard:hasPostseason"]);
 
-async function getLeaderboard(
+const getLeaderboard = cached(async (
   seasonId: number,
   divisionFilter: string | null,
   phase: string
-): Promise<LeaderboardRow[]> {
+): Promise<LeaderboardRow[]> => {
   const query = db
     .select({
       id: playerStats.playerId,
@@ -80,11 +87,11 @@ async function getLeaderboard(
     .orderBy(asc(playerStats.pos));
 
   return query as unknown as Promise<LeaderboardRow[]>;
-}
+}, ["leaderboard:getLeaderboard"]);
 
 export type ScoringPts = { cricket: number; "601": number; "501": number };
 
-async function getScoringPts(seasonId: number): Promise<ScoringPts> {
+const getScoringPts = cached(async (seasonId: number): Promise<ScoringPts> => {
   const rows = await db
     .select()
     .from(scoringConfig)
@@ -104,7 +111,7 @@ async function getScoringPts(seasonId: number): Promise<ScoringPts> {
     if (r.key === "501.win_pts")     pts["501"]   = Number(r.value);
   }
   return pts;
-}
+}, ["leaderboard:getScoringPts"]);
 
 // Default hot hand thresholds per division (01 HH ton points, RO HH cricket marks)
 const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
@@ -114,9 +121,9 @@ const DEFAULT_HH: Record<string, { hh: number; roHh: number }> = {
   D: { hh: 400, roHh: 12 },
 };
 
-async function getHhThresholds(
+const getHhThresholds = cached(async (
   seasonId: number
-): Promise<Record<string, { hh: number; roHh: number }>> {
+): Promise<Record<string, { hh: number; roHh: number }>> => {
   const rows = await db
     .select()
     .from(scoringConfig)
@@ -140,9 +147,9 @@ async function getHhThresholds(
   }
 
   return result;
-}
+}, ["leaderboard:getHhThresholds"]);
 
-async function getG3Config(seasonId: number): Promise<Record<string, string>> {
+const getG3Config = cached(async (seasonId: number): Promise<Record<string, string>> => {
   const rows = await db
     .select()
     .from(scoringConfig)
@@ -156,12 +163,12 @@ async function getG3Config(seasonId: number): Promise<Record<string, string>> {
   for (const r of rows.filter((r) => r.scope === "global")) map[r.key] = r.value;
   for (const r of rows.filter((r) => r.scope !== "global")) map[r.key] = r.value;
   return map;
-}
+}, ["leaderboard:getG3Config"]);
 
-async function getWeeklyStats(
+const getWeeklyStats = cached(async (
   seasonId: number,
   phase: string
-): Promise<{ playerId: number; hundredPlus: number; rnds: number }[]> {
+): Promise<{ playerId: number; hundredPlus: number; rnds: number }[]> => {
   const rows = await db
     .select({
       playerId: playerWeekStats.playerId,
@@ -173,16 +180,19 @@ async function getWeeklyStats(
       and(eq(playerWeekStats.seasonId, seasonId), eq(playerWeekStats.phase, phase))
     );
   return rows;
-}
+}, ["leaderboard:getWeeklyStats"]);
 
-async function getLastScraped(seasonId: number): Promise<Date | null> {
+// unstable_cache requires JSON-serializable return values — a raw Date
+// silently round-trips as a string on a cache hit, so return an ISO string
+// and let the caller construct a Date from it.
+const getLastScraped = cached(async (seasonId: number): Promise<string | null> => {
   const [row] = await db
     .select({ lastScrapedAt: seasons.lastScrapedAt })
     .from(seasons)
     .where(eq(seasons.id, seasonId))
     .limit(1);
-  return row?.lastScrapedAt ?? null;
-}
+  return row?.lastScrapedAt ? row.lastScrapedAt.toISOString() : null;
+}, ["leaderboard:getLastScraped"]);
 
 export default async function LeaderboardPage({
   searchParams,
@@ -271,7 +281,7 @@ export default async function LeaderboardPage({
               hour: "numeric",
               minute: "2-digit",
               timeZone: "America/New_York",
-            }).format(lastScraped)}{" "}
+            }).format(new Date(lastScraped))}{" "}
             ET
           </span>
         )}

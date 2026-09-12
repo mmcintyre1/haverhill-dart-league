@@ -6,21 +6,26 @@ import SeasonSelector from "@/components/SeasonSelector";
 import DivisionSelector from "@/components/DivisionSelector";
 import { formatShortDate } from "@/lib/format";
 import { dcRecapUrl } from "@/lib/dartconnect";
+import { cached } from "@/lib/cache";
 
 export const revalidate = 86400;
 
-async function getSeasons() {
+// This page reads `searchParams` (season/division selectors), which forces
+// Next.js to render it fully dynamically on every request — `revalidate`
+// above never actually applies to the route. These fetch functions are
+// wrapped in Next's data cache instead — see lib/cache.ts.
+const getSeasons = cached(async () => {
   return db.select().from(seasons).where(eq(seasons.visible, true)).orderBy(desc(seasons.startDate));
-}
+}, ["standings:getSeasons"]);
 
-async function getDivisionsForSeason(seasonId: number): Promise<string[]> {
+const getDivisionsForSeason = cached(async (seasonId: number): Promise<string[]> => {
   const rows = await db
     .selectDistinct({ name: divisions.name })
     .from(divisions)
     .where(eq(divisions.seasonId, seasonId))
     .orderBy(asc(divisions.name));
   return rows.map((r) => r.name).filter(Boolean) as string[];
-}
+}, ["standings:getDivisionsForSeason"]);
 
 type MatchRow = {
   roundSeq: number | null;
@@ -35,7 +40,7 @@ type MatchRow = {
   weekPpr: number | null;
 };
 
-async function getStandings(seasonId: number, divisionFilter: string | null) {
+const getStandings = cached(async (seasonId: number, divisionFilter: string | null) => {
   const [allTeams, allMatches, allDivisions, allPlayerStats, allWeekStats] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
@@ -218,7 +223,7 @@ async function getStandings(seasonId: number, divisionFilter: string | null) {
   }
 
   return Array.from(byDiv.entries()).sort(([a], [b]) => a.localeCompare(b));
-}
+}, ["standings:getStandings"]);
 
 export default async function StandingsPage({
   searchParams,
