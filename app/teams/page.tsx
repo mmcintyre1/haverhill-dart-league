@@ -360,6 +360,7 @@ export default async function TeamsPage({
                                   <Link
                                     key={p.id}
                                     href={`/players/${p.id}?season=${activeId}`}
+                                    prefetch={false}
                                     className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors ${
                                       isCaptain
                                         ? "border-amber-700/50 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
