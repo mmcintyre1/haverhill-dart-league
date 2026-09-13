@@ -1,6 +1,6 @@
 import { db, seasons, teams, matches, playerStats, playerWeekStats } from "@/lib/db";
 import { divisions } from "@/lib/db/schema";
-import { eq, and, or, gt, desc, asc, isNull } from "drizzle-orm";
+import { eq, and, or, gt, lte, desc, asc, isNull } from "drizzle-orm";
 import { cached } from "@/lib/cache";
 
 // This section reads `searchParams` (division selector) on its explicit
@@ -38,6 +38,12 @@ export type MatchRow = {
 };
 
 export const getStandings = cached(async (seasonId: number, divisionFilter: string | null) => {
+  // A bye row exists in the schedule for its week regardless of whether
+  // that week has happened yet, so matching on a null team ID alone (with
+  // no score to gate it, since byes never get one) pulled in future
+  // scheduled byes too — only show byes for weeks that have already been
+  // played.
+  const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD" UTC
   const [allTeams, allMatches, allDivisions, allPlayerStats, allWeekStats] = await Promise.all([
     db.select().from(teams).where(eq(teams.seasonId, seasonId)),
     db
@@ -50,8 +56,10 @@ export const getStandings = cached(async (seasonId: number, divisionFilter: stri
             eq(matches.status, "C"),
             gt(matches.homeScore!, 0),
             gt(matches.awayScore!, 0),
-            isNull(matches.homeTeamId),
-            isNull(matches.awayTeamId),
+            and(
+              or(isNull(matches.homeTeamId), isNull(matches.awayTeamId)),
+              lte(matches.schedDate, todayStr)
+            ),
           )
         )
       )
