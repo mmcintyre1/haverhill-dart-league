@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { db, seasons } from "@/lib/db";
+import { logInvocation } from "@/lib/telemetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  logInvocation("/api/health");
   const start = Date.now();
   try {
     await db.select({ id: seasons.id }).from(seasons).limit(1);

@@ -1,10 +1,12 @@
 import { db, seasons } from "@/lib/db";
 import { desc } from "drizzle-orm";
+import { logInvocation } from "@/lib/telemetry";
 import AdminPanel from "./AdminPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
+  logInvocation("/admin");
   const allSeasons = await db
     .select({ id: seasons.id, name: seasons.name, isActive: seasons.isActive, visible: seasons.visible, lastScrapedAt: seasons.lastScrapedAt })
     .from(seasons)

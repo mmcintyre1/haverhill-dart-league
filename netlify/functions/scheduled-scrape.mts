@@ -3,12 +3,14 @@
 // Background function returns 202 immediately; actual scrape runs up to 15 min.
 
 import type { Config } from "@netlify/functions";
+import { logInvocation } from "../../lib/telemetry";
 
 export const config: Config = {
   schedule: "0 9 * * 3,4", // Wed + Thu 09:00 UTC = 05:00 AM EDT (06:00 AM EST in winter)
 };
 
 export default async function handler() {
+  logInvocation("/scheduled-scrape");
   const baseUrl = (process.env.URL ?? process.env.DEPLOY_URL ?? "").replace(/\/$/, "");
   if (!baseUrl) {
     console.error("No site URL found in environment");

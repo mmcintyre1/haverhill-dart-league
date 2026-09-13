@@ -1,5 +1,6 @@
 import { runScrape, type ScrapePayload } from "../../lib/scrape-runner";
 import { db, scrapeLog } from "../../lib/db";
+import { logInvocation } from "../../lib/telemetry";
 
 // Netlify Background Function — runs for up to 15 minutes.
 // Named with the -background suffix so Netlify treats it as async.
@@ -11,6 +12,7 @@ type Event = {
 };
 
 export const handler = async (event: Event) => {
+  logInvocation("/scrape-background");
   const secret = process.env.SCRAPE_SECRET;
   const authHeader = event.headers["authorization"] ?? event.headers["Authorization"] ?? "";
   if (secret && authHeader !== `Bearer ${secret}`) {
