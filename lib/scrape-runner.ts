@@ -22,6 +22,7 @@ import {
   type DCMatchData,
   type DCMatchPlayerStat,
   type DCSeason,
+  type DCForfeitSet,
 } from "./dartconnect";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -734,36 +735,63 @@ async function scrapePhase(
       : parsedDate != null ? (dateToRoundSeq.get(parsedDate) ?? null)
       : null;
 
+    // Build the canonical forfeit list. /matches/'s segments (DCForfeitSet,
+    // via is_forfeit) is the primary, structured signal — richer and more
+    // reliable than DC's free-form notes, which have been confirmed absent
+    // even for a forfeit the segments schema otherwise fully records (a
+    // real match had is_forfeit:true for a set with no matching text in
+    // matchInfo.notes at all — relying on notes alone silently missed it
+    // for both the score cross-check below and the alert/crediting logic
+    // further down). Notes are still used for the alert's display text
+    // when present, and as a fallback for a forfeit DC only ever recorded
+    // as a note (the reverse gap). setNum is 1-indexed, matching /games/'s
+    // set_index and DC's own note text ("Set #N") — DCForfeitSet.setIndex
+    // is 0-indexed, so + 1.
+    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
+    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
+    const noteBySetNum = new Map<number, string>();
+    for (const note of forfeitNotes) {
+      const m = note.match(/^Set #(\d+): /i);
+      if (m) noteBySetNum.set(Number(m[1]), note);
+    }
+    interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
+    const forfeits: ForfeitInfo[] = [];
+    for (const fs of matchData?.forfeitSets ?? []) {
+      if (fs.isForfeitBoth) continue; // no single forfeiting team to credit a point to
+      const setNum = fs.setIndex + 1;
+      const forfeitingTeam = fs.homeWin ? awayTeamNameStr : homeTeamNameStr;
+      forfeits.push({
+        setNum, forfeitingTeam, fs,
+        message: noteBySetNum.get(setNum) ?? `Set #${setNum}: Set Forfeited by ${forfeitingTeam}`,
+      });
+    }
+    for (const [setNum, message] of noteBySetNum) {
+      if (forfeits.some((f) => f.setNum === setNum)) continue;
+      const m = message.match(/forfeited by (.+?)\.?$/i);
+      forfeits.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
+    }
+
     // Reconstruct the team score from actual per-set leg data — the same
     // thing DC's own "Match Legs" report shows — purely as a cross-check.
-    // A forfeit note always overrides that set's outcome: DC's own recorded
+    // A forfeit always overrides that set's outcome: DC's own recorded
     // legs for a forfeited set can be partial/misfiled leftovers rather
     // than a real result, so the set is excluded from the leg tally
     // entirely and the point is credited whole to the non-forfeiting team.
-    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
-    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
-    const forfeitedSetIndexes = new Map<number, string>(); // set_index -> forfeiting team (lowercased)
-    for (const note of forfeitNotes) {
-      const m = note.match(/^Set #(\d+): .*forfeited by (.+?)\.?$/i);
-      if (!m) continue;
-      forfeitedSetIndexes.set(Number(m[1]), m[2].trim().toLowerCase());
-    }
-
     let segHomeScore = 0, segAwayScore = 0;
     const segSets = segmentsMap.get(guid);
     if (segSets) {
       for (const legs of segSets) {
         if (legs.length === 0) continue;
         const si = legs[0]?.set_index;
-        if (si != null && forfeitedSetIndexes.has(si)) continue;
+        if (si != null && forfeits.some((f) => f.setNum === si)) continue;
         const w = setWinner(legs);
         if (w === 0) segHomeScore++;
         else if (w === 1) segAwayScore++;
       }
     }
-    for (const forfeitingTeam of forfeitedSetIndexes.values()) {
-      if (forfeitingTeam === homeTeamNameStr.toLowerCase()) segAwayScore++;
-      else if (forfeitingTeam === awayTeamNameStr.toLowerCase()) segHomeScore++;
+    for (const { forfeitingTeam } of forfeits) {
+      if (forfeitingTeam.toLowerCase() === homeTeamNameStr.toLowerCase()) segAwayScore++;
+      else if (forfeitingTeam.toLowerCase() === awayTeamNameStr.toLowerCase()) segHomeScore++;
     }
 
     // The authoritative team score is matchInfo.opponents[].league_points —
@@ -841,22 +869,17 @@ async function scrapePhase(
     // Flag forfeits for admin review — but only when DC genuinely has no
     // player attributed to the winning side. A forfeit entered "correctly"
     // in DC still has a real winning player recorded (they just had no one
-    // to actually play against) — that lives in /matches/'s own segments
-    // prop (DCForfeitSet), a different, richer schema than /games/'s. When
-    // that's the case, credit the winning player(s) here the same as a
-    // normal set win (this is exactly what admins were previously doing by
-    // hand via a player_stat_adjustment — confirmed against a real
-    // forfeit that already had one) and skip the alert entirely. Only
-    // raise when DC recorded no player at all (both sides forfeited, or
-    // the winning side's slot is genuinely empty) — that's the case DC's
-    // UI won't let you fix after the match locks, so a manual player-stat
-    // correction is the only way to reflect it.
-    // (noteStrings/forfeitNotes computed earlier, alongside score derivation.)
-    const forfeitSetByIndex = new Map((matchData?.forfeitSets ?? []).map((fs) => [fs.setIndex, fs]));
-    for (const note of forfeitNotes) {
-      const noteMatch = note.match(/^Set #(\d+): .*forfeited by (.+?)\.?$/i);
-      const fs = noteMatch ? forfeitSetByIndex.get(Number(noteMatch[1]) - 1) : undefined;
-      const winningPlayers = fs && !fs.isForfeitBoth
+    // to actually play against). When that's the case, credit the winning
+    // player(s) here the same as a normal set win (this is exactly what
+    // admins were previously doing by hand via a player_stat_adjustment —
+    // confirmed against a real forfeit that already had one) and skip the
+    // alert entirely. Only raise when DC recorded no player at all (both
+    // sides forfeited, or the winning side's slot is genuinely empty) —
+    // that's the case DC's UI won't let you fix after the match locks, so
+    // a manual player-stat correction is the only way to reflect it.
+    // (forfeits computed earlier, alongside score derivation.)
+    for (const { fs, message } of forfeits) {
+      const winningPlayers = fs
         ? (fs.homeWin ? fs.homePlayers : fs.awayWin ? fs.awayPlayers : [])
             .map(normalizeName)
             .filter((p) => p !== "-SHORT-")
@@ -884,13 +907,13 @@ async function scrapePhase(
           }
         }
       } else {
-        await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${note}`, guid);
+        await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${message}`, guid);
       }
     }
-    if (forfeitNotes.length === 0) {
-      // DC's own notes cleared (or never had one) — if a forfeit was
-      // flagged on a prior scrape and this rescrape doesn't see it anymore,
-      // it's been corrected/removed on DC's side.
+    if (forfeits.length === 0) {
+      // DC's own forfeit record cleared (or never had one) — if a forfeit
+      // was flagged on a prior scrape and this rescrape doesn't see it
+      // anymore, it's been corrected/removed on DC's side.
       await autoResolveAlert(targetSeasonId, realMatchId, "forfeit");
     }
 
