@@ -450,8 +450,14 @@ async function scrapePhase(
       const awayPlayers = new Set<string>();
       for (const leg of legs) {
         for (const turn of leg.turns ?? []) {
-          if (turn.home?.name) homePlayers.add(normalizeName(turn.home.name));
-          if (turn.away?.name) awayPlayers.add(normalizeName(turn.away.name));
+          // "-SHORT-" is DC's placeholder name for a missing roster slot
+          // when a team plays a set short-handed — not a real player, and
+          // legitimately can recur across several sets in one match (each
+          // time a different real player is the one actually missing), so
+          // it must never be treated as a real person for lineup-mistake
+          // checks (playing both sides, repeating a game type) below.
+          if (turn.home?.name && normalizeName(turn.home.name) !== "-SHORT-") homePlayers.add(normalizeName(turn.home.name));
+          if (turn.away?.name && normalizeName(turn.away.name) !== "-SHORT-") awayPlayers.add(normalizeName(turn.away.name));
         }
       }
       for (const p of homePlayers) matchHomePlayers.add(p);
@@ -832,16 +838,56 @@ async function scrapePhase(
     const canonicalGuid = guidsForThisMatch && guidsForThisMatch.length > 0 ? [...guidsForThisMatch].sort()[0] : guid;
     const isDuplicateGuid = canonicalGuid !== guid;
 
-    // Flag forfeits for admin review — DC records these only as free-form
-    // notes on the match, never attributed to a player. Segments/games data
-    // for a forfeited set is simply absent, so player-level stats can't
-    // reflect it automatically; an admin can enter a manual adjustment.
+    // Flag forfeits for admin review — but only when DC genuinely has no
+    // player attributed to the winning side. A forfeit entered "correctly"
+    // in DC still has a real winning player recorded (they just had no one
+    // to actually play against) — that lives in /matches/'s own segments
+    // prop (DCForfeitSet), a different, richer schema than /games/'s. When
+    // that's the case, credit the winning player(s) here the same as a
+    // normal set win (this is exactly what admins were previously doing by
+    // hand via a player_stat_adjustment — confirmed against a real
+    // forfeit that already had one) and skip the alert entirely. Only
+    // raise when DC recorded no player at all (both sides forfeited, or
+    // the winning side's slot is genuinely empty) — that's the case DC's
+    // UI won't let you fix after the match locks, so a manual player-stat
+    // correction is the only way to reflect it.
     // (noteStrings/forfeitNotes computed earlier, alongside score derivation.)
-    if (forfeitNotes.length > 0) {
-      for (const note of forfeitNotes) {
+    const forfeitSetByIndex = new Map((matchData?.forfeitSets ?? []).map((fs) => [fs.setIndex, fs]));
+    for (const note of forfeitNotes) {
+      const noteMatch = note.match(/^Set #(\d+): .*forfeited by (.+?)\.?$/i);
+      const fs = noteMatch ? forfeitSetByIndex.get(Number(noteMatch[1]) - 1) : undefined;
+      const winningPlayers = fs && !fs.isForfeitBoth
+        ? (fs.homeWin ? fs.homePlayers : fs.awayWin ? fs.awayPlayers : [])
+            .map(normalizeName)
+            .filter((p) => p !== "-SHORT-")
+        : [];
+
+      if (winningPlayers.length > 0) {
+        await autoResolveAlert(targetSeasonId, realMatchId, "forfeit");
+        const type = gameType(fs!.gameLabel ?? "");
+        if (type === "crkt" || type === "601" || type === "501") {
+          const forfeitingTeamName = fs!.homeWin ? awayTeamNameStr : homeTeamNameStr;
+          for (const pname of winningPlayers) {
+            const acc = accumByName.get(pname);
+            if (!acc) continue;
+            acc.setWins++;
+            acc.weeksPlayed.add(meta.weekKey);
+            if (type === "crkt") acc.crktWins++;
+            else if (type === "601") acc.col601Wins++;
+            else acc.col501Wins++;
+            if (!acc.weekStats.has(meta.weekKey)) acc.weekStats.set(meta.weekKey, emptyWeek(forfeitingTeamName));
+            const w = acc.weekStats.get(meta.weekKey)!;
+            w.setWins++;
+            if (type === "crkt") w.crktWins++;
+            else if (type === "601") w.col601Wins++;
+            else w.col501Wins++;
+          }
+        }
+      } else {
         await raiseAlert(targetSeasonId, realMatchId, "forfeit", `${homeTeamNameStr} vs ${awayTeamNameStr}: ${note}`, guid);
       }
-    } else {
+    }
+    if (forfeitNotes.length === 0) {
       // DC's own notes cleared (or never had one) — if a forfeit was
       // flagged on a prior scrape and this rescrape doesn't see it anymore,
       // it's been corrected/removed on DC's side.

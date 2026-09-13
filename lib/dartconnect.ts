@@ -347,9 +347,10 @@ export interface DCMatchInfo {
   round_seq?: number | null;   // may be present directly on matchInfo
   sched_date?: string | null;
   league_match_id?: number | null; // the authoritative matches.id (DC league_match_id)
-  // Free-form admin notes — DC's only record of a forfeit, e.g.
-  // "Set #11: Set Forfeited by The Punishers". Not attributed to a player;
-  // segments/games data for a forfeited set is simply absent.
+  // Free-form admin notes — DC's only record of *which* set was forfeited
+  // and by whom, e.g. "Set #11: Set Forfeited by The Punishers". Whether
+  // that set has any player data depends on how the forfeit was entered —
+  // see DCForfeitSet / fetchMatchData's parsed forfeitSets.
   notes?: { sets?: string[] | null; games?: string[] | null } | null;
   opponents: Array<{
     name: string;
@@ -367,12 +368,62 @@ export interface DCMatchInfo {
   }>;
 }
 
+/** A forfeited set as recorded in /matches/'s own segments prop — a
+ *  different schema from /games/'s (0-indexed set_index; a note's
+ *  "Set #N" maps to setIndex = N - 1). When a team enters a forfeit
+ *  "correctly" in DC (the winning side still has a player registered
+ *  uncontested), that side's `players`/`win` here shows it — a real,
+ *  clean result needing no admin attention. `isForfeitBoth` or an empty
+ *  winning side's `players` means DC recorded no player at all for that
+ *  set, which is the case that genuinely needs manual admin attention
+ *  (DC has no way to attribute individual stats after the fact). A
+ *  `player_label` of "-SHORT-" is DC's placeholder for a missing roster
+ *  slot, not a real person — never a genuine winner. */
+export interface DCForfeitSet {
+  setIndex: number;
+  gameLabel: string | null; // e.g. "Singles 501", "Doubles Cricket", "3-Person 601"
+  isForfeitBoth: boolean;
+  homeWin: boolean;
+  homePlayers: string[];
+  awayWin: boolean;
+  awayPlayers: string[];
+}
+
+function parseForfeitSets(segments: Record<string, unknown[]> | unknown[] | undefined): DCForfeitSet[] {
+  if (!segments || Array.isArray(segments)) return [];
+  const flat = (Object.values(segments) as unknown[][]).flat(1);
+  const result: DCForfeitSet[] = [];
+  for (const set of flat) {
+    if (!Array.isArray(set) || set.length === 0) continue;
+    const entry = set[0] as Record<string, unknown>;
+    if (!entry?.is_forfeit) continue;
+    const home = entry.home as Record<string, unknown> | undefined;
+    const away = entry.away as Record<string, unknown> | undefined;
+    const leagueSegment = entry.league_segment as Record<string, unknown> | undefined;
+    const playerLabels = (side: Record<string, unknown> | undefined): string[] =>
+      Array.isArray(side?.players)
+        ? (side!.players as Array<{ player_label?: string }>).map((p) => p.player_label ?? "").filter(Boolean)
+        : [];
+    result.push({
+      setIndex: Number(entry.set_index),
+      gameLabel: leagueSegment?.label ? String(leagueSegment.label) : (entry.game_name ? String(entry.game_name) : null),
+      isForfeitBoth: !!entry.is_forfeit_both,
+      homeWin: !!home?.win,
+      homePlayers: playerLabels(home),
+      awayWin: !!away?.win,
+      awayPlayers: playerLabels(away),
+    });
+  }
+  return result;
+}
+
 /** Extended return from fetchMatchData — includes the authoritative score and
  *  any round/scheduling metadata discoverable from the recap page props. */
 export interface DCMatchData {
   matchInfo: DCMatchInfo;
   roundSeq: number | null;
   schedDate: string | null;  // ISO "YYYY-MM-DD" if present in props
+  forfeitSets: DCForfeitSet[];
   propKeys: string[];        // top-level prop keys — for investigating new fields
 }
 
@@ -395,7 +446,10 @@ function parseSegmentsProp(segments: Record<string, unknown[]> | unknown[] | und
  *  recap endpoint. The authoritative team score is matchInfo.opponents[].league_points,
  *  not .score — see the DCMatchInfo comments.
  *  Also probes several candidate prop locations for round_seq / sched_date.
- *  NOTE: /matches/ segments have a different schema — use fetchGameSegments for player stats. */
+ *  NOTE: /matches/ segments have a different schema from /games/'s — still not
+ *  usable for full player-stat accumulation (use fetchGameSegments for that),
+ *  but it's the only place a forfeited set's player attribution shows up —
+ *  see parseForfeitSets / DCForfeitSet. */
 export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
   const url = `https://recap.dartconnect.com/matches/${matchGuid}`;
   const res = await fetch(url, {
@@ -435,10 +489,13 @@ export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
   // Normalise to "YYYY-MM-DD" — DC may return full ISO timestamps
   const schedDate = rawDate ? String(rawDate).slice(0, 10) : null;
 
+  const forfeitSets = parseForfeitSets(props.segments as Record<string, unknown[]> | unknown[] | undefined);
+
   return {
     matchInfo,
     roundSeq: isNaN(roundSeq as number) ? null : roundSeq,
     schedDate,
+    forfeitSets,
     propKeys: Object.keys(props),
   };
 }
