@@ -199,7 +199,7 @@ export default async function HomePage() {
               </div>
               <div className="divide-y divide-slate-800">
                 {nextRound.divisions.map((d, i) => (
-                  <details key={d.divisionName} className="group" open={i === 0}>
+                  <details key={d.divisionName} className="group" open>
                     <summary className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-800/40 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
                       <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block shrink-0">▸</span>
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -257,7 +257,7 @@ export default async function HomePage() {
               </div>
               <div className="divide-y divide-slate-800">
                 {lastRound.divisions.map((d, i) => (
-                  <details key={d.divisionName} className="group" open={i === 0}>
+                  <details key={d.divisionName} className="group" open>
                     <summary className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-800/40 transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
                       <span className="text-[0.6rem] text-slate-600 transition-transform duration-150 group-open:rotate-90 inline-block shrink-0">▸</span>
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
