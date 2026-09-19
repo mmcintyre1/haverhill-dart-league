@@ -324,6 +324,13 @@ export const playerStatAdjustments = pgTable("player_stat_adjustments", {
   winsDelta: integer("wins_delta").notNull().default(0),
   lossesDelta: integer("losses_delta").notNull().default(0),
   weekKey: text("week_key"), // optional DC "27 Jan 2026" format — also bumps that week's row if set
+  // Which match this correction is about, and which flagged issue prompted it.
+  // Both optional (a correction can be made from scratch). Before these
+  // existed there was nowhere to record context, so it all went into `note` —
+  // every correction read as a paragraph of prose. With the match stored, the
+  // UI can group corrections made together and `note` can be an actual reason.
+  matchId: integer("match_id").references(() => matches.id),
+  alertId: integer("alert_id").references(() => adminAlerts.id, { onDelete: "set null" }),
   note: text("note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

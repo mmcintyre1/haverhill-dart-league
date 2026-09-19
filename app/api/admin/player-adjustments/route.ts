@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, playerStatAdjustments, players } from "@/lib/db";
+import { db, playerStatAdjustments, players, playerSeasonTeams, matches } from "@/lib/db";
 import { and, desc, eq } from "drizzle-orm";
 
 export const runtime = "nodejs";
@@ -30,16 +30,30 @@ export async function GET(req: NextRequest) {
       id: playerStatAdjustments.id,
       playerId: playerStatAdjustments.playerId,
       playerName: players.name,
+      teamName: playerSeasonTeams.teamName,
       phase: playerStatAdjustments.phase,
       gameType: playerStatAdjustments.gameType,
       winsDelta: playerStatAdjustments.winsDelta,
       lossesDelta: playerStatAdjustments.lossesDelta,
       weekKey: playerStatAdjustments.weekKey,
+      matchId: playerStatAdjustments.matchId,
+      alertId: playerStatAdjustments.alertId,
+      matchHomeTeam: matches.homeTeamName,
+      matchAwayTeam: matches.awayTeamName,
+      matchDate: matches.schedDate,
+      matchDcGuid: matches.dcGuid,
       note: playerStatAdjustments.note,
       createdAt: playerStatAdjustments.createdAt,
     })
     .from(playerStatAdjustments)
     .innerJoin(players, eq(players.id, playerStatAdjustments.playerId))
+    // Team is the player's team for the season the correction belongs to —
+    // without it the history was just a list of bare names.
+    .leftJoin(playerSeasonTeams, and(
+      eq(playerSeasonTeams.playerId, playerStatAdjustments.playerId),
+      eq(playerSeasonTeams.seasonId, playerStatAdjustments.seasonId)
+    ))
+    .leftJoin(matches, eq(matches.id, playerStatAdjustments.matchId))
     .where(eq(playerStatAdjustments.seasonId, seasonId))
     .orderBy(desc(playerStatAdjustments.createdAt));
   return NextResponse.json(rows);
@@ -54,6 +68,7 @@ export async function POST(req: NextRequest) {
   let body: {
     seasonId?: number; playerId?: number; phase?: string; gameType?: string;
     winsDelta?: number; lossesDelta?: number; weekKey?: string | null; note?: string | null;
+    matchId?: number | null; alertId?: number | null;
   };
   try {
     body = await req.json();
@@ -81,6 +96,8 @@ export async function POST(req: NextRequest) {
     .values({
       seasonId, playerId, phase, gameType, winsDelta, lossesDelta,
       weekKey: body.weekKey || null,
+      matchId: body.matchId ?? null,
+      alertId: body.alertId ?? null,
       note: body.note || null,
     })
     .returning();

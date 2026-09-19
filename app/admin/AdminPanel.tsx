@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { formatShortDate } from "@/lib/format";
 
 // Local copy (not imported from lib/dartconnect.ts, which pulls in server-only
 // fetch logic that has no reason to end up in the client bundle).
@@ -1204,7 +1205,59 @@ type Adjustment = {
   weekKey: string | null;
   note: string | null;
   createdAt: string;
+  teamName: string | null;
+  matchId: number | null;
+  alertId: number | null;
+  matchHomeTeam: string | null;
+  matchAwayTeam: string | null;
+  matchDate: string | null;
+  matchDcGuid: string | null;
 };
+
+/** Corrections made together for one match are one event, not N events —
+ *  six players losing a deleted 601 used to render as six paragraphs. Group
+ *  them so the history reads as a list of decisions. Corrections with no match
+ *  (recorded from scratch) each stand alone. */
+type AdjGroup = {
+  key: string;
+  matchLabel: string | null;
+  matchDate: string | null;
+  matchDcGuid: string | null;
+  gameTypes: string[];
+  note: string | null;
+  items: Adjustment[];
+};
+
+const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
+const netDelta = (items: Adjustment[], field: "winsDelta" | "lossesDelta") =>
+  items.reduce((sum, i) => sum + i[field], 0);
+
+function groupAdjustments(rows: Adjustment[]): AdjGroup[] {
+  const groups: AdjGroup[] = [];
+  const byKey = new Map<string, AdjGroup>();
+  for (const a of rows) {
+    const key = a.matchId != null ? `m${a.matchId}` : `a${a.id}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        key,
+        matchLabel: a.matchHomeTeam && a.matchAwayTeam ? `${a.matchHomeTeam} vs ${a.matchAwayTeam}` : null,
+        matchDate: a.matchDate,
+        matchDcGuid: a.matchDcGuid,
+        gameTypes: [],
+        note: a.note,
+        items: [],
+      };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    if (!g.gameTypes.includes(a.gameType)) g.gameTypes.push(a.gameType);
+    // One shared note for the group when they all agree; otherwise per-row.
+    if (g.note !== a.note) g.note = null;
+    g.items.push(a);
+  }
+  return groups;
+}
 
 const ALERT_TYPE_LABELS: Record<string, string> = {
   forfeit: "Forfeit",
@@ -1289,7 +1342,11 @@ Why (optional, shown in the list):`,
 
   function startAdjustmentFromAlert(a: Alert) {
     setSourceAlert(a);
-    setNote(a.message);
+    // Deliberately NOT prefilling the note with a.message. That's what made
+    // every correction read as a paragraph — the alert text is two or three
+    // sentences of explanation, and it's now linked via alertId/matchId
+    // anyway. Leave the note for an actual reason.
+    setNote("");
     setFormOpen(true);
     requestAnimationFrame(() => document.getElementById("adjustment-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
@@ -1326,6 +1383,8 @@ Why (optional, shown in the list):`,
           winsDelta: parseInt(winsDelta) || 0,
           lossesDelta: parseInt(lossesDelta) || 0,
           weekKey: weekKey || null,
+          matchId: sourceAlert?.matchId ?? null,
+          alertId: sourceAlert?.id ?? null,
           note: note || null,
         }),
       });
@@ -1599,30 +1658,65 @@ Why (optional, shown in the list):`,
               <p className="text-sm text-slate-500">None yet.</p>
             ) : (
               <div className="space-y-1.5">
-                {adjustments.map(a => (
-                  <div key={a.id} className="rounded border border-slate-800 px-3 py-2 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                {groupAdjustments(adjustments).map(g => (
+                  <details key={g.key} className="group rounded border border-slate-800 open:border-slate-700 open:bg-slate-900/40">
+                    <summary className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-                        <span className="font-medium text-slate-200">{a.playerName}</span>
+                        <span className="text-slate-600 text-xs group-open:rotate-90 transition-transform inline-block">▸</span>
+                        <span className="font-medium text-slate-200 text-sm">
+                          {g.matchLabel ?? g.items[0].playerName}
+                        </span>
                         <span className="text-xs text-slate-500">
-                          {GAME_TYPE_LABELS[a.gameType] ?? a.gameType} · {a.phase === "POST" ? "Playoffs" : "Regular"}
-                          {a.weekKey && ` · ${a.weekKey}`}
+                          {g.matchDate && `${formatShortDate(g.matchDate)} · `}
+                          {g.gameTypes.map(t => GAME_TYPE_LABELS[t] ?? t).join(", ")}
+                          {g.items.length > 1 && ` · ${g.items.length} corrections`}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {a.winsDelta !== 0 && (
-                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400">+{a.winsDelta}W</span>
+                        {netDelta(g.items, "winsDelta") !== 0 && (
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400">
+                            {signed(netDelta(g.items, "winsDelta"))}W
+                          </span>
                         )}
-                        {a.lossesDelta !== 0 && (
-                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-rose-950/40 text-rose-400">+{a.lossesDelta}L</span>
+                        {netDelta(g.items, "lossesDelta") !== 0 && (
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-rose-950/40 text-rose-400">
+                            {signed(netDelta(g.items, "lossesDelta"))}L
+                          </span>
                         )}
-                        <button onClick={() => deleteAdjustment(a.id)} className="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
-                          Delete
-                        </button>
+                        {g.matchDcGuid && (
+                          <a href={dcRecapUrl(g.matchDcGuid)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-xs text-amber-600 hover:text-amber-400 transition-colors">↗</a>
+                        )}
                       </div>
+                    </summary>
+                    {g.note && <p className="px-3 pb-2 -mt-1 text-xs text-slate-500 leading-snug">{g.note}</p>}
+                    <div className="border-t border-slate-800/80 divide-y divide-slate-800/60">
+                      {g.items.map(a => (
+                        <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5">
+                          <div className="flex flex-wrap items-baseline gap-x-2 min-w-0">
+                            <span className="text-sm text-slate-300">{a.playerName}</span>
+                            {a.teamName && <span className="text-xs text-slate-500">{a.teamName}</span>}
+                            <span className="text-[0.7rem] text-slate-600">
+                              {GAME_TYPE_LABELS[a.gameType] ?? a.gameType}
+                              {a.phase === "POST" && " · Playoffs"}
+                              {!g.matchDate && a.weekKey && ` · ${a.weekKey}`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {a.winsDelta !== 0 && (
+                              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-950/40 text-emerald-400">{signed(a.winsDelta)}W</span>
+                            )}
+                            {a.lossesDelta !== 0 && (
+                              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-rose-950/40 text-rose-400">{signed(a.lossesDelta)}L</span>
+                            )}
+                            <button onClick={() => deleteAdjustment(a.id)} className="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors">
+                              Delete
+                            </button>
+                          </div>
+                          {!g.note && a.note && <p className="w-full text-xs text-slate-500 leading-snug">{a.note}</p>}
+                        </div>
+                      ))}
                     </div>
-                    {a.note && <p className="text-xs text-slate-500 mt-1 leading-snug">{a.note}</p>}
-                  </div>
+                  </details>
                 ))}
               </div>
             )}
