@@ -28,7 +28,16 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Competitor = Record<string, unknown>;
-type PlayerWithTeam = DCPlayerStat & { _teamName: string };
+// A roster entry carries its team's stable identifier, never just the name.
+// DC returns team names HTML-escaped in some endpoints ("Kings &amp; Queens")
+// and decoded in others, so resolving a team by name string silently fails
+// for any team with an entity in its name — leaving that entire roster with
+// a null team and division.
+type PlayerWithTeam = DCPlayerStat & {
+  _teamName: string;
+  _teamDcId: number | null;      // DC's team id — set on the live roster path
+  _teamSerialId: number | null;  // our teams.id — set on the DB fallback path
+};
 
 interface MatchMeta {
   homeTeamId: string;   // DC integer as string, may be "__unknown__"
@@ -286,7 +295,12 @@ async function scrapePhase(
         const pid = (p as unknown as Record<string, unknown>).id as number;
         if (!seenPlayerIds.has(pid)) {
           seenPlayerIds.add(pid);
-          roster.push({ ...(p as DCPlayerStat), _teamName: teamName });
+          roster.push({
+            ...(p as DCPlayerStat),
+            _teamName: teamName,
+            _teamDcId: Number.isFinite(Number(teamId)) ? Number(teamId) : null,
+            _teamSerialId: null,
+          });
         }
       }
     } catch (e) {
@@ -360,7 +374,7 @@ async function scrapePhase(
   if (roster.length === 0 && phase === "REG") {
     try {
       const dbPlayers = await db
-        .select({ dcGuid: players.dcGuid, name: players.name, teamName: playerSeasonTeams.teamName })
+        .select({ dcGuid: players.dcGuid, name: players.name, teamName: playerSeasonTeams.teamName, teamId: playerSeasonTeams.teamId })
         .from(players)
         .innerJoin(
           playerSeasonTeams,
@@ -375,6 +389,8 @@ async function scrapePhase(
           player_rank: null,
           matches: 0, legs: 0, wins: 0, points_01: 0, darts_01: 0, marks_cr: 0, darts_cr: 0, ppr: null, mpr: null, lw: null,
           _teamName: p.teamName ?? "",
+          _teamDcId: null,
+          _teamSerialId: p.teamId ?? null,
         } as PlayerWithTeam);
       }
       debug[`${phase}_rosterFallbackToDb`] = roster.length;
@@ -1019,7 +1035,9 @@ async function scrapePhase(
     if (!playerName) continue;
 
     const dcId     = s.id != null ? String(s.id) : null;
-    const teamName = String(s._teamName ?? "");
+    // Decode for storage/display — DC hands this back HTML-escaped from some
+    // endpoints, and it's shown as-is on the leaderboard's Team column.
+    const teamName = decodeHtmlEntities(String(s._teamName ?? "")) ?? "";
 
     const [player] = await db
       .insert(players)
@@ -1028,13 +1046,20 @@ async function scrapePhase(
       .returning({ id: players.id });
     const playerId = player.id;
 
-    const teamRows = await db
-      .select({ id: teams.id, divisionId: teams.divisionId })
-      .from(teams)
-      .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.name, teamName)))
-      .limit(1);
-    const teamId = teamRows[0]?.id ?? null;
-    const teamDivisionId = teamRows[0]?.divisionId ?? null;
+    // Resolve the team by stable id, never by name (see PlayerWithTeam).
+    const teamDcId = s._teamDcId != null ? Number(s._teamDcId) : null;
+    const teamId =
+      (s._teamSerialId != null ? Number(s._teamSerialId) : null) ??
+      (teamDcId != null ? dcTeamToSerialId.get(teamDcId) ?? null : null);
+    let teamDivisionId: number | null = null;
+    if (teamId != null) {
+      const teamRows = await db
+        .select({ divisionId: teams.divisionId })
+        .from(teams)
+        .where(eq(teams.id, teamId))
+        .limit(1);
+      teamDivisionId = teamRows[0]?.divisionId ?? null;
+    }
 
     // playerSeasonTeams only updated in REG pass — POST players are same people on same teams
     if (phase === "REG") {
