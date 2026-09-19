@@ -302,13 +302,23 @@ async function scrapePhase(
   const historyDebug: Record<string, number | string> = {};
   let sampleHistoryEntry: unknown = null;
 
+  // One session for the whole loop. This used to re-fetch cookies twice per
+  // team, which meant 4 requests per team instead of 2 — half of DC's rate
+  // budget spent re-establishing a session that never changes.
+  const sessionCookies = await getCSRFCookies();
+
+  // Clear last run's fetch failures up front; any that recur are re-raised
+  // below. (These alerts aren't tied to a match, so they can't be resolved
+  // individually by matchId — resolve the type, then let failures speak.)
+  await autoResolveAlert(targetSeasonId, null, "team_history_fetch_failed");
+
   for (const team of teamCompetitors) {
     const teamId = String(team.id);
     const teamName = String(team.team_name ?? team.name ?? "");
 
     // Roster fetch — failures must not suppress the history fetch
     try {
-      const c = await getCSRFCookies();
+      const c = sessionCookies;
       const res = await fetchPlayerStandings(targetSeasonId, { season_status: phase, opponent_guid: teamId }, c);
       const rosterFromTeam = res.roster ?? [];
       console.log(`[scrape] ${phase} roster team=${teamName}(${teamId}): ${rosterFromTeam.length} players, keys=${Object.keys(res).join(",")}`);
@@ -330,7 +340,7 @@ async function scrapePhase(
 
     // History fetch — separate try-catch
     try {
-      const c = await getCSRFCookies();
+      const c = sessionCookies;
       const history = await fetchTeamMatchHistory(targetSeasonId, teamId, c, phase);
       historyDebug[teamName] = history.length;
       if (!sampleHistoryEntry && history.length > 0) sampleHistoryEntry = history[0];
@@ -353,9 +363,19 @@ async function scrapePhase(
         }
       }
     } catch (e) {
-      const msg = `err: ${e instanceof Error ? e.message : String(e)}`;
-      historyDebug[teamName] = msg;
+      const msg = e instanceof Error ? e.message : String(e);
+      historyDebug[teamName] = `err: ${msg}`;
       console.log(`[scrape] ${phase} history team=${teamName}(${teamId}) ERROR: ${msg}`);
+      // A failed history fetch means none of this team's completed matches get
+      // their scores refreshed — the site keeps showing whatever it had. That
+      // used to be visible only in the scrape debug blob, so a team sat on a
+      // stale score for days without anyone knowing. Surface it.
+      await raiseAlert(
+        targetSeasonId, null, "team_history_fetch_failed",
+        `${decodeHtmlEntities(teamName) ?? teamName}: DartConnect wouldn't return this team's match history, so their ` +
+        `completed matches were skipped and may be showing an out-of-date score. Usually transient — ` +
+        `re-run the scrape. (${msg})`
+      );
     }
   }
 

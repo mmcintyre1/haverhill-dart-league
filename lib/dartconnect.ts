@@ -130,6 +130,13 @@ async function getCSRFCookies(): Promise<{ xsrf: string; session: string }> {
   return { xsrf, session };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** DC throttles this API. A full scrape makes one call per team, and the last
+ *  team in the loop was reliably getting "429 Too Many Attempts" on every run —
+ *  silently leaving that one team's matches stale forever, since the error was
+ *  only recorded in the scrape debug blob. Back off and retry rather than
+ *  dropping the team's data. */
 async function dcPost<T>(
   path: string,
   body: object,
@@ -138,25 +145,37 @@ async function dcPost<T>(
   const { xsrf, session } = cookies ?? (await getCSRFCookies());
   const xsrfDecoded = decodeURIComponent(xsrf);
 
-  const res = await fetch(`${DC_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "X-XSRF-TOKEN": xsrfDecoded,
-      Cookie: `XSRF-TOKEN=${xsrf}; ${session}`,
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-      Referer: `${DC_BASE}/league/${LEAGUE_ID}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const delaysMs = [2000, 5000, 10000];
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${DC_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-XSRF-TOKEN": xsrfDecoded,
+        Cookie: `XSRF-TOKEN=${xsrf}; ${session}`,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        Referer: `${DC_BASE}/league/${LEAGUE_ID}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
+    if (res.ok) return res.json() as Promise<T>;
+
+    if (res.status === 429 && attempt < delaysMs.length) {
+      // Honour Retry-After when DC sends one, otherwise escalate our own wait.
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 30000)
+        : delaysMs[attempt];
+      console.warn(`dcPost: 429 on ${path}, retrying in ${waitMs}ms (attempt ${attempt + 1})`);
+      await sleep(waitMs);
+      continue;
+    }
+
     throw new Error(`DC API error ${res.status} on ${path}: ${await res.text()}`);
   }
-
-  return res.json() as Promise<T>;
 }
 
 // ─── Public API functions ─────────────────────────────────────────────────────

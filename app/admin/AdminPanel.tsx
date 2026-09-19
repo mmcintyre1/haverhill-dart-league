@@ -1203,6 +1203,7 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   player_both_sides: "Lineup mix-up",
   player_repeat_game_type: "Repeat game-type entry",
   score_mismatch: "Score doesn't add up",
+  team_history_fetch_failed: "Team data not refreshed",
 };
 
 const GAME_TYPE_LABELS: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
