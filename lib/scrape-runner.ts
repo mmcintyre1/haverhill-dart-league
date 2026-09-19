@@ -150,19 +150,38 @@ function splitOpponents(matchInfo: DCMatchInfo | undefined) {
 }
 
 /** Record a data-quality issue for admin review. Deduped on (matchId, type,
- *  message) so re-scraping the same match doesn't spam duplicate alerts. */
+ *  message) so re-scraping the same match doesn't spam duplicate alerts.
+ *
+ *  Respects "Ignore": if a human has marked this (matchId, type) as never
+ *  actionable, nothing is raised. That check is deliberately on the issue and
+ *  not on the message, because alert text embeds computed scores — keying on
+ *  the message would let a one-point change resurrect something the admin
+ *  already retired. The real case: a set DartConnect deleted outright, which
+ *  the leg tally can never reconcile no matter how many times we look. */
 async function raiseAlert(
   seasonId: number, matchId: number | null, type: string, message: string,
   dcGuid?: string | null, dcGuid2?: string | null
 ) {
+  const [ignoredHere] = await db
+    .select({ id: adminAlerts.id })
+    .from(adminAlerts)
+    .where(and(
+      eq(adminAlerts.seasonId, seasonId),
+      matchId != null ? eq(adminAlerts.matchId, matchId) : isNull(adminAlerts.matchId),
+      eq(adminAlerts.type, type),
+      eq(adminAlerts.ignored, true),
+    ))
+    .limit(1);
+  if (ignoredHere) return;
+
   await db
     .insert(adminAlerts)
     .values({ seasonId, matchId, type, message, dcGuid: dcGuid ?? null, dcGuid2: dcGuid2 ?? null })
     .onConflictDoUpdate({
       target: [adminAlerts.matchId, adminAlerts.type, adminAlerts.message],
-      // Reopen it if this exact issue was previously resolved (auto or
-      // manual) and just recurred — a match rescan finding the same problem
-      // again should never stay silently marked resolved.
+      // Reopen it if this exact issue was previously resolved and just
+      // recurred — a rescan finding the same problem again should never stay
+      // silently marked fixed.
       set: { resolved: false, autoResolvedAt: null },
     });
 }
@@ -180,6 +199,7 @@ async function autoResolveAlert(seasonId: number, matchId: number | null, type: 
       matchId != null ? eq(adminAlerts.matchId, matchId) : isNull(adminAlerts.matchId),
       eq(adminAlerts.type, type),
       eq(adminAlerts.resolved, false),
+      eq(adminAlerts.ignored, false),
     ));
 }
 

@@ -1177,7 +1177,18 @@ type Alert = {
   dcGuid: string | null;
   dcGuid2: string | null;
   autoResolvedAt: string | null;
+  ignored: boolean;
+  ignoredAt: string | null;
+  ignoredReason: string | null;
 };
+
+/** An issue is in exactly one of three states. Only "ignored" is a human
+ *  decision — "fixed" is set by a rescrape confirming the problem is gone. */
+type IssueState = "open" | "fixed" | "ignored";
+function issueState(a: Alert): IssueState {
+  if (a.ignored) return "ignored";
+  return a.resolved ? "fixed" : "open";
+}
 
 type AdjPlayer = { id: number; name: string; teamName: string | null };
 type AdjWeek = { weekKey: string; isoDate: string | null };
@@ -1211,7 +1222,7 @@ const GAME_TYPE_LABELS: Record<string, string> = { crkt: "Cricket", "601": "601"
 function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
   const [seasonId, setSeasonId] = useState<number | null>(seasons.find(s => s.isActive)?.id ?? seasons[0]?.id ?? null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [showResolved, setShowResolved] = useState(false);
+  const [showClosed, setShowClosed] = useState(false);
   const [players, setPlayers] = useState<AdjPlayer[]>([]);
   const [weeks, setWeeks] = useState<AdjWeek[]>([]);
   const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
@@ -1254,9 +1265,26 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
 
   useEffect(() => { load(); }, [seasonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function resolveAlert(id: number, resolved: boolean) {
-    await fetch("/api/admin/alerts", { method: "PATCH", headers: authHeaders(), body: JSON.stringify({ id, resolved }) });
-    setAlerts(prev => prev.map(a => (a.id === id ? { ...a, resolved } : a)));
+  async function setIgnored(id: number, ignored: boolean, reason?: string) {
+    await fetch("/api/admin/alerts", { method: "PATCH", headers: authHeaders(), body: JSON.stringify({ id, ignored, reason }) });
+    setAlerts(prev => prev.map(a => (a.id === id
+      ? { ...a, ignored, resolved: ignored, autoResolvedAt: null,
+          ignoredAt: ignored ? new Date().toISOString() : null,
+          ignoredReason: ignored ? (reason?.trim() || null) : null }
+      : a)));
+  }
+
+  function confirmIgnore(a: Alert) {
+    const reason = window.prompt(
+      `Stop flagging this issue?
+
+It won't come back, even if the next refresh still detects it. Use this only when the underlying data can't be fixed in DartConnect.
+
+Why (optional, shown in the list):`,
+      ""
+    );
+    if (reason === null) return; // cancelled
+    setIgnored(a.id, true, reason);
   }
 
   function startAdjustmentFromAlert(a: Alert) {
@@ -1305,8 +1333,11 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
       if (!res.ok) throw new Error(data.error ?? "Unknown error");
 
       if (sourceAlert) {
-        await resolveAlert(sourceAlert.id, true);
-        setResult({ ok: true, message: `Correction saved for ${player.name}, and the flagged alert is marked resolved. It'll show up on the site after the next Data Refresh.` });
+        // A correction can't make DartConnect start reporting the set, so the
+        // next refresh would flag this again forever. Recording the fix here
+        // is the decision that retires it.
+        await setIgnored(sourceAlert.id, true, "Fixed with a manual correction");
+        setResult({ ok: true, message: `Correction saved for ${player.name}, and that issue won't be flagged again. It'll show up on the site after the next Data Refresh.` });
       } else {
         setResult({ ok: true, message: `Correction saved for ${player.name}. It'll show up on the site after the next Data Refresh.` });
       }
@@ -1324,7 +1355,7 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
     setAdjustments(prev => prev.filter(a => a.id !== id));
   }
 
-  const visibleAlerts = alerts.filter(a => showResolved || !a.resolved);
+  const visibleAlerts = alerts.filter(a => showClosed || issueState(a) === "open");
   const inputCls = "w-full rounded bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500";
   const labelCls = "block text-xs text-slate-400 mb-1";
 
@@ -1353,27 +1384,38 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-slate-200">1. Flagged issues</h3>
               <label className="flex items-center gap-1.5 text-xs text-slate-400">
-                <input type="checkbox" checked={showResolved} onChange={e => setShowResolved(e.target.checked)} />
-                Show resolved
+                <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+                Show fixed &amp; ignored
               </label>
             </div>
             <p className="text-xs text-slate-500 mb-3">
-              Things the last scrape spotted that need a human decision — a forfeit DC won&apos;t attribute to a player, a
-              result that looked wrong, etc. <span className="text-slate-400">Resolving an alert just hides it from this list</span> —
-              it doesn&apos;t change any stats on its own. For a forfeit, use <span className="text-slate-400">Fix with a correction</span> below
-              to actually adjust the player&apos;s record; that will resolve the alert for you.
+              Things the last refresh spotted that need a human decision — a forfeit DC won&apos;t attribute to a player, a
+              result that doesn&apos;t add up, and so on. An issue clears itself: fix it in DartConnect, run
+              <span className="text-slate-400"> Data Refresh</span>, and it moves to <span className="text-emerald-500">Fixed</span> on
+              its own. Use <span className="text-slate-400">Fix with a correction</span> when DC can&apos;t record the fix, and
+              <span className="text-slate-400"> Stop flagging</span> only when nothing will ever make it go away.
             </p>
             {visibleAlerts.length === 0 ? (
-              <p className="text-sm text-slate-500">No {showResolved ? "" : "open "}alerts for this season.</p>
+              <p className="text-sm text-slate-500">
+                {showClosed ? "Nothing flagged for this season." : "Nothing open for this season."}
+              </p>
             ) : (
               <div className="space-y-2">
                 {visibleAlerts.map(a => (
-                  <div key={a.id} className={`rounded-lg border px-3 py-2.5 ${a.resolved ? "border-slate-800 bg-slate-900/40 opacity-60" : "border-slate-700 bg-slate-800/40"}`}>
+                  <div key={a.id} className={`rounded-lg border px-3 py-2.5 ${issueState(a) === "open" ? "border-slate-700 bg-slate-800/40" : "border-slate-800 bg-slate-900/40 opacity-60"}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <span className="inline-block text-[0.65rem] font-semibold uppercase tracking-wider text-amber-500 mb-1">
-                          {ALERT_TYPE_LABELS[a.type] ?? a.type}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-amber-500">
+                            {ALERT_TYPE_LABELS[a.type] ?? a.type}
+                          </span>
+                          {issueState(a) === "fixed" && (
+                            <span className="text-[0.6rem] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-950/50 text-emerald-400">Fixed</span>
+                          )}
+                          {issueState(a) === "ignored" && (
+                            <span className="text-[0.6rem] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Ignored</span>
+                          )}
+                        </div>
                         <p className="text-sm text-slate-300 break-words">{a.message}</p>
                         {(a.dcGuid || a.dcGuid2) && (
                           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
@@ -1389,37 +1431,50 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
                             )}
                           </div>
                         )}
-                        {!a.resolved && (
+                        {issueState(a) === "open" && (
                           <p className="text-[0.7rem] text-slate-600 mt-1.5">
-                            Fixed in DartConnect? No need to Dismiss — running Data Refresh re-checks this and clears it automatically once it's no longer detected.
+                            Fixed it in DartConnect? Just run Data Refresh — this re-checks itself and clears automatically.
                           </p>
                         )}
-                        {a.resolved && a.autoResolvedAt && (
+                        {issueState(a) === "fixed" && a.autoResolvedAt && (
                           <p className="text-[0.7rem] text-emerald-600 mt-1.5">
-                            ✓ Auto-resolved on rescrape · {new Date(a.autoResolvedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            ✓ No longer detected · {new Date(a.autoResolvedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                           </p>
                         )}
-                        {a.resolved && !a.autoResolvedAt && (
-                          <p className="text-[0.7rem] text-slate-600 mt-1.5">Manually dismissed</p>
+                        {issueState(a) === "ignored" && (
+                          <p className="text-[0.7rem] text-slate-500 mt-1.5">
+                            Won&apos;t be flagged again{a.ignoredAt && ` · since ${new Date(a.ignoredAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
+                            {a.ignoredReason && <span className="text-slate-400"> — {a.ignoredReason}</span>}
+                          </p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {a.type === "forfeit" && !a.resolved && (
+                        {a.type === "forfeit" && issueState(a) === "open" && (
                           <button
                             onClick={() => startAdjustmentFromAlert(a)}
-                            title="Opens the correction form below, pre-filled with this alert's context"
+                            title="Opens the correction form below, linked to this issue"
                             className="text-xs px-2 py-1 rounded bg-amber-700/40 text-amber-300 hover:bg-amber-700/60 transition-colors"
                           >
                             Fix with a correction
                           </button>
                         )}
-                        <button
-                          onClick={() => resolveAlert(a.id, !a.resolved)}
-                          title={a.resolved ? "Move this back into the open list" : "Hide this from the open list — doesn't change any stats"}
-                          className="text-xs px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-700 transition-colors"
-                        >
-                          {a.resolved ? "Reopen" : "Dismiss"}
-                        </button>
+                        {a.ignored ? (
+                          <button
+                            onClick={() => setIgnored(a.id, false)}
+                            title="Start flagging this again — the next refresh decides whether it's still a problem"
+                            className="text-xs px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-700 transition-colors"
+                          >
+                            Reopen
+                          </button>
+                        ) : issueState(a) === "open" ? (
+                          <button
+                            onClick={() => confirmIgnore(a)}
+                            title="Never flag this again — for issues nothing can fix, like a set DartConnect deleted"
+                            className="text-xs px-2 py-1 rounded bg-slate-700/60 text-slate-300 hover:bg-slate-700 transition-colors"
+                          >
+                            Stop flagging
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>

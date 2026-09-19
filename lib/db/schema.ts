@@ -287,10 +287,19 @@ export const adminAlerts = pgTable(
     dcGuid: text("dc_guid"),
     dcGuid2: text("dc_guid_2"),
     resolved: boolean("resolved").notNull().default(false),
-    // Set only when a rescrape re-checked this exact issue and found it gone
-    // (as opposed to a human clicking Dismiss) — lets the UI show why an
-    // alert disappeared instead of leaving it ambiguous.
+    // Set when a rescrape re-checked this issue and found it gone — the
+    // "Fixed" state. The only way an issue resolves itself.
     autoResolvedAt: timestamp("auto_resolved_at"),
+    // "Ignored": a human decided this will never be actionable — typically
+    // because the underlying data is unfixable in DC (e.g. a deleted set the
+    // leg tally can never see) and a manual correction already covers it.
+    // Unlike `resolved`, this survives a rescrape: raiseAlert refuses to
+    // re-raise anything matching an ignored (matchId, type). It deliberately
+    // keys on the ISSUE, not the message — alert text embeds computed scores,
+    // so message-level suppression would break the moment a number moved.
+    ignored: boolean("ignored").notNull().default(false),
+    ignoredAt: timestamp("ignored_at"),
+    ignoredReason: text("ignored_reason"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("admin_alerts_dedupe_idx").on(t.matchId, t.type, t.message)]

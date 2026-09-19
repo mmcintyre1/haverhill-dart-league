@@ -33,22 +33,33 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(rows);
 }
 
-// PATCH /api/admin/alerts  Body: { id: number, resolved: boolean }
+// PATCH /api/admin/alerts  Body: { id, ignored, reason? }
+//
+// An issue has three states and only one of them is a human decision:
+// open, fixed (a rescrape confirmed it's gone — set by the scraper, never
+// here), and ignored (this will never be actionable). Ignoring also resolves
+// it so it leaves the open list; reopening clears both flags and any stale
+// autoResolvedAt, so the next scrape decides the state honestly.
 export async function PATCH(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  let body: { id?: number; resolved?: boolean };
+  let body: { id?: number; ignored?: boolean; reason?: string | null };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (!body.id || typeof body.resolved !== "boolean") {
-    return NextResponse.json({ error: "id and resolved are required" }, { status: 400 });
+  if (!body.id || typeof body.ignored !== "boolean") {
+    return NextResponse.json({ error: "id and ignored are required" }, { status: 400 });
   }
-  // Manual toggle always wins over a stale autoResolvedAt from a prior
-  // rescrape — clear it so the UI doesn't misattribute this action.
-  await db.update(adminAlerts).set({ resolved: body.resolved, autoResolvedAt: null }).where(eq(adminAlerts.id, body.id));
+  await db
+    .update(adminAlerts)
+    .set(
+      body.ignored
+        ? { ignored: true, ignoredAt: new Date(), ignoredReason: body.reason?.trim() || null, resolved: true, autoResolvedAt: null }
+        : { ignored: false, ignoredAt: null, ignoredReason: null, resolved: false, autoResolvedAt: null }
+    )
+    .where(eq(adminAlerts.id, body.id));
   return NextResponse.json({ ok: true });
 }
