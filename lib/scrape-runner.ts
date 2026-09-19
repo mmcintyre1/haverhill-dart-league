@@ -20,6 +20,7 @@ import {
   type DCPlayerStat,
   type DCGameLeg,
   type DCMatchData,
+  type DCMatchInfo,
   type DCMatchPlayerStat,
   type DCSeason,
   type DCForfeitSet,
@@ -126,6 +127,26 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     opponentNames: [],
     weekStats: new Map(),
   };
+}
+
+/** Pair a recap's `opponents[]` entries to the home and away sides.
+ *  `opponents` carries no team id — the label really is the only link DC gives
+ *  us here — but both `home_label` and `opponents[].name` are HTML-escaped, and
+ *  inconsistently so across calls. Decode and normalise BOTH sides before
+ *  comparing: matching a decoded label against a raw name silently missed for
+ *  every team with an ampersand in its name ("Kings & Queens" vs
+ *  "Kings &amp; Queens"), which quietly dropped those matches off the
+ *  authoritative league_points score onto the segments-derived fallback. */
+function splitOpponents(matchInfo: DCMatchInfo | undefined) {
+  const opponents = matchInfo?.opponents ?? [];
+  const norm = (s?: string | null) =>
+    s ? (decodeHtmlEntities(s) ?? s).trim().toLowerCase() : null;
+  const homeLabel = norm(matchInfo?.home_label);
+  // No label at all → fall back to positional order. Label present but
+  // unmatched → leave both unset rather than guessing the orientation.
+  const homeOpp = homeLabel != null ? opponents.find((o) => norm(o.name) === homeLabel) : opponents[0];
+  const awayOpp = homeOpp != null ? opponents.find((o) => o !== homeOpp) : opponents[1];
+  return { homeOpp, awayOpp };
 }
 
 /** Record a data-quality issue for admin review. Deduped on (matchId, type,
@@ -728,6 +749,61 @@ async function scrapePhase(
     guidsByRealMatchId.get(realId)!.push(g);
   }
 
+  // Which 1-indexed set numbers a given recap actually contains. /matches/ and
+  // /games/ each carry set_index and either can come back thin, so take the
+  // union of both rather than trusting one.
+  const setNumsForGuid = (g: string): number[] => {
+    const nums = new Set<number>(matchDataMap.get(g)?.setIndexes ?? []);
+    for (const legs of segmentsMap.get(g) ?? []) {
+      const si = legs[0]?.set_index;
+      if (si != null && Number.isFinite(Number(si))) nums.add(Number(si));
+    }
+    return [...nums].sort((a, b) => a - b);
+  };
+
+  // Decide which multi-recap matches are *split* matches that should be
+  // combined, versus redos that should stay flagged.
+  //
+  // When a match is exited and resumed, DC writes a second recap under the same
+  // league_match_id and never merges the two. Crucially the second recap
+  // *continues* the set numbering instead of restarting it, so the two
+  // fragments cover disjoint sets — which is a reliable, general signal that
+  // they're two halves of one match, and combining their league points gives
+  // the real result. Overlapping set numbers mean the same sets were played
+  // twice: we have no way to know which run is the one that counts, so those
+  // keep today's behaviour (flag for a human, don't merge).
+  //
+  // Confirmed against K&Q vs Berkeley 2026-09-01 (league_match_id 10096549):
+  // one recap holds sets 1-3 at 1-2, the other sets 4-11 at 7-1 — a match the
+  // site was showing as a 1-2 loss that was really an 8-3 win.
+  interface SplitMerge { canonicalGuid: string; guids: string[] }
+  const splitMerges = new Map<number, SplitMerge>();
+  for (const [realId, gs] of guidsByRealMatchId) {
+    if (gs.length < 2) continue;
+    const setsByGuid = new Map(gs.map((g) => [g, setNumsForGuid(g)] as const));
+    // A fragment we can't read set numbers for tells us nothing — don't merge.
+    if (gs.some((g) => setsByGuid.get(g)!.length === 0)) continue;
+    const seen = new Set<number>();
+    let disjoint = true;
+    for (const g of gs) {
+      for (const n of setsByGuid.get(g)!) {
+        if (seen.has(n)) { disjoint = false; break; }
+        seen.add(n);
+      }
+      if (!disjoint) break;
+    }
+    if (!disjoint) continue;
+    // Canonical fragment = the one holding the most sets, so the stored dcGuid
+    // (and the "view recap" link built from it) lands on the bulk of the match
+    // rather than on a three-set stub. Ties break on earliest set, then guid,
+    // so the choice is stable across rescrapes.
+    const ordered = [...gs].sort((a, b) =>
+      setsByGuid.get(b)!.length - setsByGuid.get(a)!.length ||
+      setsByGuid.get(a)![0] - setsByGuid.get(b)![0] ||
+      a.localeCompare(b));
+    splitMerges.set(realId, { canonicalGuid: ordered[0], guids: ordered });
+  }
+
   for (const [guid, meta] of matchMeta) {
     if (meta.homeTeamId === "__unknown__" || meta.awayTeamId === "__unknown__") continue;
     const homeSerialId = dcTeamToSerialId.get(parseInt(meta.homeTeamId));
@@ -744,6 +820,15 @@ async function scrapePhase(
 
     const matchData = matchDataMap.get(guid);
     const matchInfo = matchData?.matchInfo;
+    const realMatchId = matchInfo?.league_match_id ?? null;
+
+    // Split match (see splitMerges above): every fragment folds into the
+    // canonical one, which reads scores, forfeits and set tallies across all of
+    // them below. Skip the others outright so nothing gets counted twice.
+    const splitMerge = realMatchId != null ? splitMerges.get(realMatchId) : undefined;
+    if (splitMerge && splitMerge.canonicalGuid !== guid) continue;
+    const fragmentGuids = splitMerge ? splitMerge.guids : [guid];
+
     const parsedDate = matchData?.schedDate ?? weekKeyToISODate(meta.weekKey);
     const roundSeq: number | null =
       meta.roundSeq != null ? meta.roundSeq
@@ -763,28 +848,35 @@ async function scrapePhase(
     // as a note (the reverse gap). setNum is 1-indexed, matching /games/'s
     // set_index and DC's own note text ("Set #N") — DCForfeitSet.setIndex
     // is 0-indexed, so + 1.
-    const noteStrings = [...(matchInfo?.notes?.sets ?? []), ...(matchInfo?.notes?.games ?? [])];
-    const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
-    const noteBySetNum = new Map<number, string>();
-    for (const note of forfeitNotes) {
-      const m = note.match(/^Set #(\d+): /i);
-      if (m) noteBySetNum.set(Number(m[1]), note);
-    }
+    //
+    // Everything below reads across `fragmentGuids` — normally just this guid,
+    // but every fragment of a split match, since set numbers continue across
+    // them and so never collide.
     interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
     const forfeits: ForfeitInfo[] = [];
-    for (const fs of matchData?.forfeitSets ?? []) {
-      if (fs.isForfeitBoth) continue; // no single forfeiting team to credit a point to
-      const setNum = fs.setIndex + 1;
-      const forfeitingTeam = fs.homeWin ? awayTeamNameStr : homeTeamNameStr;
-      forfeits.push({
-        setNum, forfeitingTeam, fs,
-        message: noteBySetNum.get(setNum) ?? `Set #${setNum}: Set Forfeited by ${forfeitingTeam}`,
-      });
-    }
-    for (const [setNum, message] of noteBySetNum) {
-      if (forfeits.some((f) => f.setNum === setNum)) continue;
-      const m = message.match(/forfeited by (.+?)\.?$/i);
-      forfeits.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
+    for (const g of fragmentGuids) {
+      const fInfo = matchDataMap.get(g)?.matchInfo;
+      const noteStrings = [...(fInfo?.notes?.sets ?? []), ...(fInfo?.notes?.games ?? [])];
+      const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
+      const noteBySetNum = new Map<number, string>();
+      for (const note of forfeitNotes) {
+        const m = note.match(/^Set #(\d+): /i);
+        if (m) noteBySetNum.set(Number(m[1]), note);
+      }
+      for (const fs of matchDataMap.get(g)?.forfeitSets ?? []) {
+        if (fs.isForfeitBoth) continue; // no single forfeiting team to credit a point to
+        const setNum = fs.setIndex + 1;
+        const forfeitingTeam = fs.homeWin ? awayTeamNameStr : homeTeamNameStr;
+        forfeits.push({
+          setNum, forfeitingTeam, fs,
+          message: noteBySetNum.get(setNum) ?? `Set #${setNum}: Set Forfeited by ${forfeitingTeam}`,
+        });
+      }
+      for (const [setNum, message] of noteBySetNum) {
+        if (forfeits.some((f) => f.setNum === setNum)) continue;
+        const m = message.match(/forfeited by (.+?)\.?$/i);
+        forfeits.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
+      }
     }
 
     // Reconstruct the team score from actual per-set leg data — the same
@@ -794,9 +886,8 @@ async function scrapePhase(
     // than a real result, so the set is excluded from the leg tally
     // entirely and the point is credited whole to the non-forfeiting team.
     let segHomeScore = 0, segAwayScore = 0;
-    const segSets = segmentsMap.get(guid);
-    if (segSets) {
-      for (const legs of segSets) {
+    for (const g of fragmentGuids) {
+      for (const legs of segmentsMap.get(g) ?? []) {
         if (legs.length === 0) continue;
         const si = legs[0]?.set_index;
         if (si != null && forfeits.some((f) => f.setNum === si)) continue;
@@ -818,13 +909,17 @@ async function scrapePhase(
     // aggregate that does NOT get updated by those manual corrections and
     // has been observed to drift/go stale independent of them — do not use
     // it. Fall back to the segments-derived tally only when league_points
-    // itself is unavailable.
-    const opponents = matchInfo?.opponents ?? [];
-    const homeLabelDecoded = matchInfo?.home_label ? (decodeHtmlEntities(matchInfo.home_label) ?? matchInfo.home_label) : null;
-    const homeOpp = homeLabelDecoded != null ? opponents.find((o) => o.name === homeLabelDecoded) : opponents[0];
-    const awayOpp = homeOpp != null ? opponents.find((o) => o !== homeOpp) : opponents[1];
-    const homeScore = homeOpp?.league_points ?? segHomeScore;
-    const awayScore = awayOpp?.league_points ?? segAwayScore;
+    // itself is unavailable. For a split match the fragments each hold the
+    // league points for their own sets, so they sum to the real result.
+    let homeLP: number | null = null, awayLP: number | null = null;
+    for (const g of fragmentGuids) {
+      const { homeOpp, awayOpp } = splitOpponents(matchDataMap.get(g)?.matchInfo);
+      if (homeOpp?.league_points == null || awayOpp?.league_points == null) { homeLP = awayLP = null; break; }
+      homeLP = (homeLP ?? 0) + homeOpp.league_points;
+      awayLP = (awayLP ?? 0) + awayOpp.league_points;
+    }
+    const homeScore = homeLP ?? segHomeScore;
+    const awayScore = awayLP ?? segAwayScore;
 
     if (homeScore + awayScore === 0) continue;
 
@@ -835,13 +930,12 @@ async function scrapePhase(
     // correction hasn't been mirrored with a player-level stat correction
     // yet — worth a human look either way, so keep flagging it even though
     // the displayed score above already uses the trustworthy source.
-    await autoResolveAlert(targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch");
-    if (homeOpp?.league_points != null && awayOpp?.league_points != null &&
-        (segHomeScore !== homeOpp.league_points || segAwayScore !== awayOpp.league_points)) {
+    await autoResolveAlert(targetSeasonId, realMatchId, "score_mismatch");
+    if (homeLP != null && awayLP != null && (segHomeScore !== homeLP || segAwayScore !== awayLP)) {
       await raiseAlert(
-        targetSeasonId, matchInfo?.league_match_id ?? null, "score_mismatch",
+        targetSeasonId, realMatchId, "score_mismatch",
         `${homeTeamNameStr} vs ${awayTeamNameStr}: leg-by-leg tally ${segHomeScore}-${segAwayScore} doesn't match DC's official ` +
-        `league points ${homeOpp.league_points}-${awayOpp.league_points} — this match's segments data may be incomplete or a ` +
+        `league points ${homeLP}-${awayLP} — this match's segments data may be incomplete or a ` +
         `manual DC correction may need a matching player-level correction here too. Verify manually.`,
         guid
       );
@@ -854,11 +948,12 @@ async function scrapePhase(
     // practice: (1) a match gets exited and restarted, producing two DC
     // recaps DC never auto-merges even after an admin reassigns one onto
     // the correct date; (2) an aborted/restarted game on a second board.
-    // Whichever guid is processed first "claims" the row; later guids are
-    // flagged, not merged — we have no reliable way to know if a second
-    // recap's score is a correction, a duplicate, or one half of a split
-    // match, so guessing would risk silently showing the wrong result.
-    const realMatchId = matchInfo?.league_match_id ?? null;
+    // Case (1) is handled by splitMerges above when the fragments' set
+    // numbers are disjoint. What's left here is the ambiguous remainder —
+    // recaps covering the same sets twice, where a second recap's score could
+    // equally be a correction or a stray duplicate. Whichever guid is
+    // processed first "claims" the row; later guids are flagged, not merged,
+    // since guessing would risk silently showing the wrong result.
     let existingRowFound = false;
     let existingDcGuid: string | null = null;
     let existingScore: { home: number; away: number } | null = null;
@@ -879,7 +974,9 @@ async function scrapePhase(
     // from comparing against the DB's current dcGuid, which is what caused
     // the self-comparison bug above.
     const guidsForThisMatch = realMatchId != null ? guidsByRealMatchId.get(realMatchId) : undefined;
-    const canonicalGuid = guidsForThisMatch && guidsForThisMatch.length > 0 ? [...guidsForThisMatch].sort()[0] : guid;
+    const canonicalGuid = splitMerge ? splitMerge.canonicalGuid
+      : guidsForThisMatch && guidsForThisMatch.length > 0 ? [...guidsForThisMatch].sort()[0]
+      : guid;
     const isDuplicateGuid = canonicalGuid !== guid;
 
     // Flag forfeits for admin review — but only when DC genuinely has no

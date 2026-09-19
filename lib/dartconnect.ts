@@ -417,6 +417,30 @@ function parseForfeitSets(segments: Record<string, unknown[]> | unknown[] | unde
   return result;
 }
 
+/** Every set this recap contains, as 1-indexed set numbers — matching /games/'s
+ *  `set_index` and DC's own "Set #N" note text. /matches/'s raw `set_index` is
+ *  0-indexed, hence the +1.
+ *
+ *  Why this is worth carrying: when a match is exited and resumed, DC writes two
+ *  separate recaps under one league_match_id and never merges them. The second
+ *  recap *continues* the set numbering rather than restarting it, so disjoint set
+ *  numbers across two recaps identify a genuine split match (safe to combine),
+ *  while overlapping ones mean the same sets were played twice (a redo — the
+ *  scraper can't tell which result is real, so it alerts instead). */
+function parseSetIndexes(segments: Record<string, unknown[]> | unknown[] | undefined): number[] {
+  if (!segments || Array.isArray(segments)) return [];
+  const flat = (Object.values(segments) as unknown[][]).flat(1);
+  const out = new Set<number>();
+  for (const set of flat) {
+    if (!Array.isArray(set) || set.length === 0) continue;
+    const raw = (set[0] as Record<string, unknown>)?.set_index;
+    if (raw == null) continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) out.add(n + 1);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
 /** Extended return from fetchMatchData — includes the authoritative score and
  *  any round/scheduling metadata discoverable from the recap page props. */
 export interface DCMatchData {
@@ -424,6 +448,7 @@ export interface DCMatchData {
   roundSeq: number | null;
   schedDate: string | null;  // ISO "YYYY-MM-DD" if present in props
   forfeitSets: DCForfeitSet[];
+  setIndexes: number[];      // 1-indexed set numbers present in this recap
   propKeys: string[];        // top-level prop keys — for investigating new fields
 }
 
@@ -489,13 +514,16 @@ export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
   // Normalise to "YYYY-MM-DD" — DC may return full ISO timestamps
   const schedDate = rawDate ? String(rawDate).slice(0, 10) : null;
 
-  const forfeitSets = parseForfeitSets(props.segments as Record<string, unknown[]> | unknown[] | undefined);
+  const segmentsProp = props.segments as Record<string, unknown[]> | unknown[] | undefined;
+  const forfeitSets = parseForfeitSets(segmentsProp);
+  const setIndexes = parseSetIndexes(segmentsProp);
 
   return {
     matchInfo,
     roundSeq: isNaN(roundSeq as number) ? null : roundSeq,
     schedDate,
     forfeitSets,
+    setIndexes,
     propKeys: Object.keys(props),
   };
 }
