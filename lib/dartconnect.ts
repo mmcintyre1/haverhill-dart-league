@@ -379,14 +379,23 @@ export interface DCMatchInfo {
  *  (DC has no way to attribute individual stats after the fact). A
  *  `player_label` of "-SHORT-" is DC's placeholder for a missing roster
  *  slot, not a real person — never a genuine winner. */
+/** A player slot on a forfeited set. /matches/'s segments are the one place DC
+ *  attaches a player id to set participation (`player_guid`, the same numeric id
+ *  as the roster's `id` and our `players.dcGuid`), so credit for a forfeit win
+ *  can be assigned by id rather than by matching a label string. */
+export interface DCForfeitPlayer {
+  label: string;
+  dcId: string | null;
+}
+
 export interface DCForfeitSet {
   setIndex: number;
   gameLabel: string | null; // e.g. "Singles 501", "Doubles Cricket", "3-Person 601"
   isForfeitBoth: boolean;
   homeWin: boolean;
-  homePlayers: string[];
+  homePlayers: DCForfeitPlayer[];
   awayWin: boolean;
-  awayPlayers: string[];
+  awayPlayers: DCForfeitPlayer[];
 }
 
 function parseForfeitSets(segments: Record<string, unknown[]> | unknown[] | undefined): DCForfeitSet[] {
@@ -400,9 +409,14 @@ function parseForfeitSets(segments: Record<string, unknown[]> | unknown[] | unde
     const home = entry.home as Record<string, unknown> | undefined;
     const away = entry.away as Record<string, unknown> | undefined;
     const leagueSegment = entry.league_segment as Record<string, unknown> | undefined;
-    const playerLabels = (side: Record<string, unknown> | undefined): string[] =>
+    const playerLabels = (side: Record<string, unknown> | undefined): DCForfeitPlayer[] =>
       Array.isArray(side?.players)
-        ? (side!.players as Array<{ player_label?: string }>).map((p) => p.player_label ?? "").filter(Boolean)
+        ? (side!.players as Array<{ player_label?: string; player_guid?: number | string | null }>)
+            .map((p) => ({
+              label: p.player_label ?? "",
+              dcId: p.player_guid != null ? String(p.player_guid) : null,
+            }))
+            .filter((p) => p.label || p.dcId)
         : [];
     result.push({
       setIndex: Number(entry.set_index),
@@ -697,17 +711,51 @@ export interface DCTeamVenue {
   phone: string;
 }
 
+/** DC's phone strings are hand-entered and wildly inconsistent — real values
+ *  seen on one league's venues include "+1 978-687-9565", "1 (978)687-9848",
+ *  "+1 (603) 328-5476" and "-1 603-382-0222" (someone typed a minus for the
+ *  plus). Reduce to digits, drop a leading country code, and render one way. */
+function normalizePhone(raw: string | null | undefined): string {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length !== 10) return "";
+  return `${local.slice(0, 3)}-${local.slice(3, 6)}-${local.slice(6)}`;
+}
+
+/** One scheduled match as the my.dartconnect.com schedule page's Inertia props
+ *  describe it. Only the fields venue lookup needs are declared. */
+interface DCScheduleItem {
+  item_type?: string;
+  is_bye?: boolean;
+  home?: { id?: number | null; name?: string | null } | null;
+  venue?: {
+    name?: string | null;
+    location?: string | null;
+    city?: string | null;
+    info?: { phone_number?: string | null } | null;
+  } | null;
+}
+
 /**
- * Scrape the my.dartconnect.com schedule page for a given slug + seasonId and
- * return a Map of teamName → venue info.  Home team names are matched by the
- * "(H)" marker in the HTML.  Returns an empty Map if the fetch or parse fails
- * (non-blocking — venue info is best-effort).
+ * Fetch each team's home venue from the my.dartconnect.com schedule page,
+ * keyed by **DC team id** — the same id stored on `teams.dcId`.
+ *
+ * The page is an Inertia app, so the schedule is right there as JSON in the
+ * `data-page` attribute: match groups → divisions → items, each item carrying
+ * `home.id` and a structured `venue` object. This replaces an earlier pass that
+ * regex-scraped the rendered HTML for team names next to an "(H)" marker and
+ * then matched those names against `teams.name` — brittle on two counts (it
+ * broke whenever DC changed markup, and it tied venue data to a mutable team
+ * name), and it silently dropped venues DC rendered differently.
+ *
+ * Best-effort: returns an empty Map if the fetch or parse fails, since venue
+ * info is decoration rather than league data.
  */
 export async function fetchTeamVenues(
   slug: string,
   seasonId: number
-): Promise<Map<string, DCTeamVenue>> {
-  const result = new Map<string, DCTeamVenue>();
+): Promise<Map<number, DCTeamVenue>> {
+  const result = new Map<number, DCTeamVenue>();
 
   try {
     const res = await fetch(
@@ -726,67 +774,46 @@ export async function fetchTeamVenues(
       return result;
     }
 
-    const raw = await res.text();
-    const html = decodeHtmlEntities(raw) ?? "";
-
-    // Find all home-team positions — spans with class="truncate" immediately
-    // followed by a "(H)" sibling span.
-    const homeTeamRe =
-      /<span class="truncate">([^<]+)<\/span>\s*<span[^>]*>\(H\)<\/span>/g;
-    const homeTeams: Array<{ name: string; index: number }> = [];
-    let m: RegExpExecArray | null;
-    while ((m = homeTeamRe.exec(html)) !== null) {
-      homeTeams.push({ name: m[1].trim(), index: m.index });
+    const html = await res.text();
+    const m = html.match(/data-page="([^"]+)"/);
+    if (!m) {
+      console.warn(`fetchTeamVenues: no data-page props for ${slug}/${seasonId}`);
+      return result;
     }
+    const props = (JSON.parse(m[1].replace(/&quot;/g, '"')) as { props?: Record<string, unknown> }).props ?? {};
 
-    for (let i = 0; i < homeTeams.length; i++) {
-      const startIdx = homeTeams[i].index;
-      // Look forward to the next home-team entry (or end of HTML).
-      const endIdx =
-        i + 1 < homeTeams.length ? homeTeams[i + 1].index : html.length;
-      const section = html.slice(startIdx, endIdx);
+    // Future/pending/completed are three separate groupings of the same
+    // schedule — a team's venue can appear in any of them depending on how far
+    // the season has run, so walk all three.
+    const groups = ["future_match_groups", "pending_match_groups", "completed_match_groups"]
+      .flatMap((k) => (Array.isArray(props[k]) ? (props[k] as Array<{ divisions?: Array<{ items?: DCScheduleItem[] }> }>) : []));
 
-      // Venue name: font-semibold div is the name; the following div is the city (ignored).
-      const venueNameM = section.match(
-        /<div class="font-semibold">([^<]+)<\/div>\s*<div>([^<]+)<\/div>/
-      );
-
-      // Address block — collect all spans inside the space-y-1 div and join them.
-      const addressBlockM = section.match(
-        /<div class="text-xl font-bold">Venue Address<\/div>\s*<div>\s*<div class="space-y-1">([\s\S]*?)<\/div>\s*<\/div>/
-      );
-
-      // Address: first span only — subsequent spans/anchors are "Get Directions" UI, not data.
-      let address = "";
-      if (addressBlockM) {
-        const firstSpan = addressBlockM[1].match(/<span>([^<]+)<\/span>/);
-        if (firstSpan) {
-          address = normalizeAddress(cleanAddress(firstSpan[1].trim()));
+    for (const group of groups) {
+      for (const division of group.divisions ?? []) {
+        for (const item of division.items ?? []) {
+          if (item.is_bye || !item.venue) continue;
+          const teamDcId = item.home?.id;
+          if (teamDcId == null) continue;
+          const venue: DCTeamVenue = {
+            // Names come HTML-escaped here the same as everywhere else in DC's
+            // payloads ("Amvet&#039;s 147", "J Brians Pub &amp; Grille").
+            name: decodeHtmlEntities(item.venue.name ?? "") ?? "",
+            address: normalizeAddress(cleanAddress(item.venue.location ?? "")),
+            phone: normalizePhone(item.venue.info?.phone_number),
+          };
+          const existing = result.get(teamDcId);
+          // First occurrence wins, but let a later one fill in blanks — DC has
+          // been seen leaving a field empty on one card and populated on another.
+          if (!existing) {
+            result.set(teamDcId, venue);
+          } else {
+            result.set(teamDcId, {
+              name: existing.name || venue.name,
+              address: existing.address || venue.address,
+              phone: existing.phone || venue.phone,
+            });
+          }
         }
-      }
-
-      // Phone link.
-      const phoneM = section.match(/href="tel:\+1 ([\d\s()-]+)"/);
-
-      if (!venueNameM && !address && !phoneM) continue;
-
-      const teamName = homeTeams[i].name;
-      const name = venueNameM ? venueNameM[1].trim() : "";
-      const phone = phoneM ? phoneM[1].trim() : "";
-      const existing = result.get(teamName);
-      if (!existing) {
-        result.set(teamName, { name, address, phone });
-      } else if (!existing.name && name) {
-        // A team's earliest schedule-page occurrence can be missing the
-        // venue-name div even though the address is right there (seen on
-        // real data — DC renders that first card differently). Prefer a
-        // later occurrence's name once we find one instead of getting
-        // stuck on the first, incomplete match forever.
-        result.set(teamName, {
-          name,
-          address: existing.address || address,
-          phone: existing.phone || phone,
-        });
       }
     }
   } catch (err) {

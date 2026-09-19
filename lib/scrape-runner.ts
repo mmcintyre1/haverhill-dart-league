@@ -451,19 +451,23 @@ async function scrapePhase(
 
   // ── E. Build player accumulators from segments ──────────────────────────────
   const accumByName = new Map<string, PlayerAccum>();
+  // Same accumulators, indexed by DC player id. The per-turn data in /games/
+  // carries only a player's name, so name has to stay the primary key for stat
+  // accumulation — but wherever DC *does* hand us an id (forfeit sets in
+  // /matches/), resolve through this instead, so a label that doesn't match the
+  // roster spelling can't silently drop the credit on the floor.
+  const accumByDcId = new Map<string, PlayerAccum>();
   for (const p of roster) {
     const s = p as unknown as Record<string, unknown>;
     const firstName = String(s.player_first_name ?? "").trim();
     const lastName  = String(s.player_last_name  ?? "").trim();
     const playerName = normalizeName([firstName, lastName].filter(Boolean).join(" "));
     if (!playerName) continue;
+    const dcId = s.id != null ? String(s.id) : "";
     if (!accumByName.has(playerName)) {
-      accumByName.set(playerName, emptyAccum(
-        s.id != null ? String(s.id) : "",
-        playerName,
-        String(s._teamName ?? "")
-      ));
+      accumByName.set(playerName, emptyAccum(dcId, playerName, String(s._teamName ?? "")));
     }
+    if (dcId) accumByDcId.set(dcId, accumByName.get(playerName)!);
   }
 
   for (const [guid, sets] of segmentsMap) {
@@ -992,10 +996,11 @@ async function scrapePhase(
     // a manual player-stat correction is the only way to reflect it.
     // (forfeits computed earlier, alongside score derivation.)
     for (const { fs, message } of forfeits) {
+      // "-SHORT-" is DC's placeholder for an unfilled roster slot, not a person.
       const winningPlayers = fs
         ? (fs.homeWin ? fs.homePlayers : fs.awayWin ? fs.awayPlayers : [])
-            .map(normalizeName)
-            .filter((p) => p !== "-SHORT-")
+            .map((p) => ({ ...p, label: normalizeName(p.label) }))
+            .filter((p) => p.label !== "-SHORT-")
         : [];
 
       if (winningPlayers.length > 0) {
@@ -1003,8 +1008,10 @@ async function scrapePhase(
         const type = gameType(fs!.gameLabel ?? "");
         if (type === "crkt" || type === "601" || type === "501") {
           const forfeitingTeamName = fs!.homeWin ? awayTeamNameStr : homeTeamNameStr;
-          for (const pname of winningPlayers) {
-            const acc = accumByName.get(pname);
+          for (const p of winningPlayers) {
+            // DC's own player id first; the label is only a fallback for the
+            // rare slot it doesn't stamp an id on.
+            const acc = (p.dcId ? accumByDcId.get(p.dcId) : undefined) ?? accumByName.get(p.label);
             if (!acc) continue;
             acc.setWins++;
             acc.weeksPlayed.add(meta.weekKey);
@@ -1471,13 +1478,15 @@ async function scrapeSeasonStats(
   const leagueSlug = process.env.DC_LEAGUE_ID;
   if (leagueSlug) {
     try {
+      // Keyed by DC team id, matching teams.dcId — a team can be renamed
+      // mid-season without its venue silently detaching.
       const venueMap = await fetchTeamVenues(leagueSlug, targetSeasonId);
       debug.venueMapSize = venueMap.size;
-      for (const [teamName, v] of venueMap) {
+      for (const [teamDcId, v] of venueMap) {
         await db
           .update(teams)
           .set({ venueName: v.name, venueAddress: v.address, venuePhone: v.phone })
-          .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.name, teamName)));
+          .where(and(eq(teams.seasonId, targetSeasonId), eq(teams.dcId, teamDcId)));
       }
     } catch (e) {
       debug.venueError = e instanceof Error ? e.message : String(e);
