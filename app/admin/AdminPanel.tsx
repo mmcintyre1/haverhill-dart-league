@@ -1327,6 +1327,12 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
       : a)));
   }
 
+  /** Corrections recorded against this issue. Without this the card gave no
+   *  sign a fix already existed, so a handled issue looked untouched. */
+  function correctionsFor(a: Alert) {
+    return adjustments.filter(adj => adj.alertId === a.id);
+  }
+
   function confirmIgnore(a: Alert) {
     const reason = window.prompt(
       `Stop flagging this issue?
@@ -1334,10 +1340,15 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
 It won't come back, even if the next refresh still detects it. Use this only when the underlying data can't be fixed in DartConnect.
 
 Why (optional, shown in the list):`,
-      ""
+      ignorePrefill(a)
     );
     if (reason === null) return; // cancelled
     setIgnored(a.id, true, reason);
+  }
+
+  function ignorePrefill(a: Alert) {
+    const n = correctionsFor(a).length;
+    return n > 0 ? (n === 1 ? "Fixed with a manual correction" : `Fixed with ${n} manual corrections`) : "";
   }
 
   function startAdjustmentFromAlert(a: Alert) {
@@ -1490,9 +1501,20 @@ Why (optional, shown in the list):`,
                             )}
                           </div>
                         )}
-                        {issueState(a) === "open" && (
+                        {correctionsFor(a).length > 0 && (
+                          <p className="text-[0.7rem] text-emerald-600/90 mt-1.5">
+                            ✓ {correctionsFor(a).length === 1 ? "1 correction recorded" : `${correctionsFor(a).length} corrections recorded`}
+                            <span className="text-slate-500"> — {correctionsFor(a).map(c => c.playerName).join(", ")}</span>
+                          </p>
+                        )}
+                        {issueState(a) === "open" && correctionsFor(a).length === 0 && (
                           <p className="text-[0.7rem] text-slate-600 mt-1.5">
                             Fixed it in DartConnect? Just run Data Refresh — this re-checks itself and clears automatically.
+                          </p>
+                        )}
+                        {issueState(a) === "open" && correctionsFor(a).length > 0 && (
+                          <p className="text-[0.7rem] text-slate-600 mt-1.5">
+                            Still flagged because DartConnect keeps reporting it. If the corrections above cover it, use Stop flagging.
                           </p>
                         )}
                         {issueState(a) === "fixed" && a.autoResolvedAt && (
