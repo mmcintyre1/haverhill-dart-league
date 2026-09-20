@@ -1,5 +1,5 @@
 import { eq, and, inArray, isNull } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments } from "./db";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments, setForfeits } from "./db";
 import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId, normalizeName } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
 import {
@@ -104,6 +104,9 @@ interface PlayerAccum {
   zeroOneDartsTotal: number;
   crktMarksTotal: number;
   crktDartsTotal: number;
+  /** True once any forfeited set's throwing has been subtracted for this
+   *  player — DC's leaderboard MPR still counts it, so prefer ours. */
+  hasVoidedThrows: boolean;
   ro6b: number;
   weekHundredPlus: Map<string, number>;
   weeksPlayed: Set<string>;
@@ -120,7 +123,7 @@ function emptyAccum(dcId: string, name: string, teamName: string): PlayerAccum {
     col501Wins: 0, col501Losses: 0,
     hundredPlus: 0, cricketRnds: 0, oneEighty: 0, ro9: 0, hOut: 0, minDarts501: 999,
     zeroOnePointsTotal: 0, zeroOneDartsTotal: 0,
-    crktMarksTotal: 0, crktDartsTotal: 0,
+    crktMarksTotal: 0, crktDartsTotal: 0, hasVoidedThrows: false,
     ro6b: 0,
     weekHundredPlus: new Map(),
     weeksPlayed: new Set(),
@@ -489,6 +492,28 @@ async function scrapePhase(
   debug[`${phase}_matchPlayerStatsLoaded`] = matchPlayerStatsMap.size;
   debug[`${phase}_segmentsErrors`] = segResults.filter(r => r.status === "rejected").length;
 
+  // Admin-recorded set forfeits, keyed league_match_id → setNumber → side.
+  // League rule: a forfeited set contributes nothing but the win/loss, so
+  // these sets are excluded from every throwing stat below and their result
+  // comes from the ruling rather than from whatever legs DC still holds.
+  const forfeitedSets = new Map<number, Map<number, string>>();
+  for (const row of await db
+    .select({ matchId: setForfeits.matchId, setNumber: setForfeits.setNumber, forfeitedBy: setForfeits.forfeitedBy })
+    .from(setForfeits)
+    .where(eq(setForfeits.seasonId, targetSeasonId))) {
+    if (!forfeitedSets.has(row.matchId)) forfeitedSets.set(row.matchId, new Map());
+    forfeitedSets.get(row.matchId)!.set(row.setNumber, row.forfeitedBy);
+  }
+  debug[`${phase}_setForfeits`] = [...forfeitedSets.values()].reduce((n, m) => n + m.size, 0);
+
+  /** Which side forfeited this set, if the league ruled one — "home" | "away" | "both". */
+  const forfeitSideFor = (guid: string, setNum: number | null | undefined): string | null => {
+    if (setNum == null) return null;
+    const mid = matchDataMap.get(guid)?.matchInfo?.league_match_id;
+    if (mid == null) return null;
+    return forfeitedSets.get(mid)?.get(setNum) ?? null;
+  };
+
   // ── E. Build player accumulators from segments ──────────────────────────────
   const accumByName = new Map<string, PlayerAccum>();
   // Same accumulators, indexed by DC player id. The per-turn data in /games/
@@ -526,7 +551,12 @@ async function scrapePhase(
     for (const legs of sets) {
       if (legs.length === 0) continue;
       const type = gameType(legs[0].game_name ?? "");
-      const winner = setWinner(legs);
+      const forfeitSide = forfeitSideFor(guid, legs[0]?.set_index);
+      // A forfeited set's result comes from the ruling, not the legs — DC's
+      // recorded legs for one are partial or misfiled leftovers.
+      const winner = forfeitSide
+        ? (forfeitSide === "home" ? 1 : forfeitSide === "away" ? 0 : -1)
+        : setWinner(legs);
 
       const homePlayers = new Set<string>();
       const awayPlayers = new Set<string>();
@@ -544,10 +574,14 @@ async function scrapePhase(
       }
       for (const p of homePlayers) matchHomePlayers.add(p);
       for (const p of awayPlayers) matchAwayPlayers.add(p);
-      if (!gameTypeSetsByPlayer.has(type)) gameTypeSetsByPlayer.set(type, new Map());
-      const typeCounts = gameTypeSetsByPlayer.get(type)!;
-      for (const p of new Set([...homePlayers, ...awayPlayers])) {
-        typeCounts.set(p, (typeCounts.get(p) ?? 0) + 1);
+      // A forfeited set was never actually played, so it must not count
+      // toward "this player played two sets of the same game type".
+      if (!forfeitSide) {
+        if (!gameTypeSetsByPlayer.has(type)) gameTypeSetsByPlayer.set(type, new Map());
+        const typeCounts = gameTypeSetsByPlayer.get(type)!;
+        for (const p of new Set([...homePlayers, ...awayPlayers])) {
+          typeCounts.set(p, (typeCounts.get(p) ?? 0) + 1);
+        }
       }
 
       function awardSet(
@@ -579,6 +613,10 @@ async function scrapePhase(
 
       awardSet(homePlayers, winner === 0, awayPlayers, awayTeamName);
       awardSet(awayPlayers, winner === 1, homePlayers, homeTeamName);
+
+      // Everything below this point is throwing data — marks, darts, points,
+      // notables, low-dart games. None of it counts for a forfeited set.
+      if (forfeitSide) continue;
 
       for (const leg of legs) {
         const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
@@ -695,28 +733,67 @@ async function scrapePhase(
   }
 
   // ── F. Merge per-match player stats (MPR, PPR, season aggregates) ───────────
+  const dcNum = (v: unknown): number => {
+    const n = parseFloat(String(v ?? 0).replace(/,/g, ""));
+    return isNaN(n) ? 0 : n;
+  };
+
   for (const [guid, playerMatchStats] of matchPlayerStatsMap) {
     const meta = matchMeta.get(guid);
     if (!meta) continue;
     const weekKey = meta.weekKey;
-    for (const ps of playerMatchStats.players) {
-      const acc = accumByName.get(normalizeName(ps.name));
-      if (!acc) continue;
-      const w = acc.weekStats.get(weekKey);
-      if (w) {
-        if (ps.cricket_average && parseFloat(ps.cricket_average) > 0) w.mpr = ps.cricket_average;
-        const avgPpr = parseFloat(ps.average_01);
-        if (!isNaN(avgPpr) && avgPpr > 0) w.ppr = ps.average_01;
+
+    // DC's per-match totals include every set it recorded, forfeits and all.
+    // Total the forfeited sets' legs per player so they can be taken back
+    // out. Summing perLeg reproduces DC's own aggregates exactly (verified
+    // across a full match), so this subtracts cleanly rather than drifting.
+    const voided = new Map<string, { pts01: number; darts01: number; marks: number; crktDarts: number }>();
+    for (const leg of playerMatchStats.perLeg) {
+      if (!forfeitSideFor(guid, leg.set_number)) continue;
+      const key = normalizeName(leg.name);
+      const v = voided.get(key) ?? { pts01: 0, darts01: 0, marks: 0, crktDarts: 0 };
+      const darts = dcNum(leg.darts_thrown);
+      if (/cricket/i.test(leg.game_name ?? "")) {
+        v.marks += dcNum(leg.marks_scored);
+        v.crktDarts += darts;
+      } else {
+        v.pts01 += dcNum(leg.points_scored);
+        v.darts01 += darts;
       }
-      const pts01 = parseInt(String(ps.points_scored_01).replace(/,/g, ""), 10);
-      const dts01 = parseInt(String(ps.darts_thrown_01).replace(/,/g, ""), 10);
-      if (!isNaN(pts01) && !isNaN(dts01) && dts01 > 0) {
+      voided.set(key, v);
+    }
+
+    for (const ps of playerMatchStats.players) {
+      const nameKey = normalizeName(ps.name);
+      const acc = accumByName.get(nameKey);
+      if (!acc) continue;
+      const v = voided.get(nameKey);
+      const w = acc.weekStats.get(weekKey);
+
+      const pts01     = dcNum(ps.points_scored_01)     - (v?.pts01 ?? 0);
+      const dts01     = dcNum(ps.darts_thrown_01)      - (v?.darts01 ?? 0);
+      const marks     = dcNum(ps.cricket_marks_scored) - (v?.marks ?? 0);
+      const crktDarts = dcNum(ps.cricket_darts_thrown) - (v?.crktDarts ?? 0);
+      if (v) acc.hasVoidedThrows = true;
+
+      if (w) {
+        // With a set voided, DC's own per-match average still counts it —
+        // recompute from what's left. Without one, keep DC's value as before.
+        if (v) {
+          if (crktDarts > 0) w.mpr = ((marks * 3) / crktDarts).toFixed(2);
+          if (dts01 > 0) w.ppr = ((pts01 * 3) / dts01).toFixed(2);
+        } else {
+          if (ps.cricket_average && parseFloat(ps.cricket_average) > 0) w.mpr = ps.cricket_average;
+          const avgPpr = parseFloat(ps.average_01);
+          if (!isNaN(avgPpr) && avgPpr > 0) w.ppr = ps.average_01;
+        }
+      }
+
+      if (dts01 > 0) {
         acc.zeroOnePointsTotal += pts01;
         acc.zeroOneDartsTotal  += dts01;
       }
-      const marks     = Number(ps.cricket_marks_scored);
-      const crktDarts = Number(ps.cricket_darts_thrown);
-      if (!isNaN(marks) && !isNaN(crktDarts) && crktDarts > 0) {
+      if (crktDarts > 0) {
         acc.crktMarksTotal += marks;
         acc.crktDartsTotal += crktDarts;
       }
@@ -896,6 +973,12 @@ async function scrapePhase(
     // Everything below reads across `fragmentGuids` — normally just this guid,
     // but every fragment of a split match, since set numbers continue across
     // them and so never collide.
+    // Sets the league has formally ruled a forfeit. A ruling supersedes
+    // whatever DC recorded for that set: it decides the point, its throwing
+    // data is already excluded from player stats in step E, and it must not
+    // also raise a forfeit alert — the human has already dealt with it.
+    const ruledSets = realMatchId != null ? forfeitedSets.get(realMatchId) : undefined;
+
     interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
     const forfeits: ForfeitInfo[] = [];
     for (const g of fragmentGuids) {
@@ -922,6 +1005,11 @@ async function scrapePhase(
         forfeits.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
       }
     }
+    // Drop anything the league has already ruled on — kept out of the alert
+    // path and the DC-derived scoring above, which the ruling replaces.
+    const dcForfeits = forfeits.filter((f) => !ruledSets?.has(f.setNum));
+    forfeits.length = 0;
+    forfeits.push(...dcForfeits);
 
     // Reconstruct the team score from actual per-set leg data — the same
     // thing DC's own "Match Legs" report shows — purely as a cross-check.
@@ -934,11 +1022,18 @@ async function scrapePhase(
       for (const legs of segmentsMap.get(g) ?? []) {
         if (legs.length === 0) continue;
         const si = legs[0]?.set_index;
+        if (si != null && ruledSets?.has(si)) continue;
         if (si != null && forfeits.some((f) => f.setNum === si)) continue;
         const w = setWinner(legs);
         if (w === 0) segHomeScore++;
         else if (w === 1) segAwayScore++;
       }
+    }
+    // A league ruling decides its own set: the non-forfeiting side takes the
+    // point, and on a both-team forfeit neither side does.
+    for (const [, side] of ruledSets ?? []) {
+      if (side === "home") segAwayScore++;
+      else if (side === "away") segHomeScore++;
     }
     for (const { forfeitingTeam } of forfeits) {
       if (forfeitingTeam.toLowerCase() === homeTeamNameStr.toLowerCase()) segAwayScore++;
@@ -1276,7 +1371,9 @@ async function scrapePhase(
       hOut:        acc?.hOut         ?? 0,
       ldg:         acc && acc.minDarts501 < 999 ? acc.minDarts501 : null,
       ro6b:        acc?.ro6b         ?? 0,
-      mpr: (phase === "REG" ? leaderboardMprByName.get(playerName) : undefined) ?? computedMpr,
+      // DC's leaderboard MPR can't know about a league forfeit ruling, so for
+      // any player whose throwing we voided, our computed figure is the honest one.
+      mpr: (phase === "REG" && !acc?.hasVoidedThrows ? leaderboardMprByName.get(playerName) : undefined) ?? computedMpr,
       ppr: acc && acc.zeroOneDartsTotal > 0
         ? (acc.zeroOnePointsTotal * 3 / acc.zeroOneDartsTotal).toFixed(2)
         : null,
