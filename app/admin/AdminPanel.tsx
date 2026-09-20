@@ -1191,6 +1191,18 @@ function issueState(a: Alert): IssueState {
   return a.resolved ? "fixed" : "open";
 }
 
+type SetForfeit = {
+  id: number;
+  matchId: number;
+  setNumber: number;
+  forfeitedBy: string;
+  note: string | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  schedDate: string | null;
+  dcGuid: string | null;
+};
+
 type AdjPlayer = { id: number; name: string; teamName: string | null };
 type AdjWeek = { weekKey: string; isoDate: string | null };
 
@@ -1279,6 +1291,7 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
   const [players, setPlayers] = useState<AdjPlayer[]>([]);
   const [weeks, setWeeks] = useState<AdjWeek[]>([]);
   const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [forfeits, setForfeitRulings] = useState<SetForfeit[]>([]);
   const [loading, setLoading] = useState(true);
   const [result, setResult] = useState<Result | null>(null);
 
@@ -1303,16 +1316,18 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
   async function load() {
     if (!seasonId) return;
     setLoading(true);
-    const [alertsRes, playersRes, weeksRes, adjRes] = await Promise.all([
+    const [alertsRes, playersRes, weeksRes, adjRes, ffRes] = await Promise.all([
       fetch(`/api/admin/alerts?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
       fetch(`/api/admin/players?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
       fetch(`/api/admin/weeks?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
       fetch(`/api/admin/player-adjustments?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
+      fetch(`/api/admin/set-forfeits?season=${seasonId}`, { headers: authHeaders({ "Content-Type": "" }) }),
     ]);
     setAlerts(alertsRes.ok ? await alertsRes.json() : []);
     setPlayers(playersRes.ok ? await playersRes.json() : []);
     setWeeks(weeksRes.ok ? await weeksRes.json() : []);
     setAdjustments(adjRes.ok ? await adjRes.json() : []);
+    setForfeitRulings(ffRes.ok ? await ffRes.json() : []);
     setLoading(false);
   }
 
@@ -1326,6 +1341,53 @@ function AlertsTab({ seasons, secret }: { seasons: Season[]; secret: string }) {
           ignoredReason: ignored ? (reason?.trim() || null) : null }
       : a)));
   }
+
+  /** DC writes a forfeit's set number into the alert text as "Set #N" — the
+   *  same 1-indexed numbering the ruling uses, so it can be prefilled. */
+  function setNumberFromAlert(a: Alert): number | null {
+    const m = a.message.match(/Set #(\d+)/i);
+    return m ? Number(m[1]) : null;
+  }
+
+  async function ruleForfeit(a: Alert) {
+    if (!seasonId || a.matchId == null) return;
+    const setNumber = setNumberFromAlert(a);
+    if (setNumber == null) {
+      setResult({ ok: false, message: "Couldn't read a set number from this issue — record the ruling from the list below instead." });
+      return;
+    }
+    const answer = window.prompt(
+      `Rule set #${setNumber} a forfeit.
+
+Nothing from this set will count toward any player's stats except the win and the loss — no marks, darts, notables or averages.
+
+Who forfeited? Type home, away, or both:`,
+      "both"
+    );
+    const side = answer?.trim().toLowerCase();
+    if (!side) return;
+    if (!["home", "away", "both"].includes(side)) {
+      setResult({ ok: false, message: `"${answer}" isn't one of home, away or both.` });
+      return;
+    }
+    const res = await fetch("/api/admin/set-forfeits", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ seasonId, matchId: a.matchId, setNumber, forfeitedBy: side, note: a.message }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setResult({ ok: false, message: data.error ?? "Couldn't save the ruling." }); return; }
+    setResult({ ok: true, message: `Set #${setNumber} ruled a forfeit. It stops counting toward stats after the next Data Refresh, and this issue won't be flagged again.` });
+    load();
+  }
+
+  async function deleteForfeitRuling(id: number) {
+    if (!confirm("Remove this ruling? The set's darts and notables will count again after the next Data Refresh.")) return;
+    await fetch(`/api/admin/set-forfeits?id=${id}`, { method: "DELETE", headers: authHeaders() });
+    load();
+  }
+
+  const FORFEIT_SIDE_LABEL: Record<string, string> = { home: "Home team", away: "Away team", both: "Both teams" };
 
   /** Corrections recorded against this issue. Without this the card gave no
    *  sign a fix already existed, so a handled issue looked untouched. */

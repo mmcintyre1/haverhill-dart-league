@@ -305,40 +305,6 @@ export const adminAlerts = pgTable(
   (t) => [uniqueIndex("admin_alerts_dedupe_idx").on(t.matchId, t.type, t.message)]
 );
 
-// ─── Set Forfeits ───────────────────────────────────────────────────────────
-// A set the league has ruled a forfeit, recorded by an admin because
-// DartConnect gives no structural signal for one. DC records a both-team
-// forfeit as free text in match notes and an opaque team-points change, and
-// its `set_win: null` means only "an admin edited this set", never "voided" —
-// confirmed by surveying a full season.
-//
-// League rule: on a game forfeit the no-show's name is lined out and no darts
-// count, so a forfeited set contributes NOTHING to player stats except the
-// win/loss. The scraper therefore drops the set's marks, darts, points and
-// notables and awards the result from `forfeitedBy` instead of from the legs
-// DC may still have recorded.
-
-export const setForfeits = pgTable(
-  "set_forfeits",
-  {
-    id: serial("id").primaryKey(),
-    seasonId: integer("season_id")
-      .notNull()
-      .references(() => seasons.id),
-    matchId: integer("match_id")
-      .notNull()
-      .references(() => matches.id),
-    // 1-indexed, matching /games/ set_index and DC's own "Set #N" note text.
-    setNumber: integer("set_number").notNull(),
-    // "home" | "away" | "both". "both" gives the point to neither team and a
-    // loss to every player in the set.
-    forfeitedBy: text("forfeited_by").notNull(),
-    note: text("note"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("set_forfeits_match_set_idx").on(t.matchId, t.setNumber)]
-);
-
 // ─── Player Stat Adjustments ────────────────────────────────────────────────
 // Manual corrections for game-level results DC doesn't expose per-player
 // (e.g. singles forfeits) — merged into the scrape's in-memory accumulators

@@ -1,5 +1,5 @@
 import { eq, and, inArray, isNull } from "drizzle-orm";
-import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments, setForfeits } from "./db";
+import { db, seasons, divisions, teams, players, playerStats, playerWeekStats, matches, scrapeLog, playerSeasonTeams, scoringConfig, adminAlerts, playerStatAdjustments } from "./db";
 import { parseCricketNotable, gameType, setWinner, guidToFakeId, parseDcMatchId, normalizeName } from "./scrape-utils";
 import { weekKeyToISODate } from "./format";
 import {
@@ -492,27 +492,65 @@ async function scrapePhase(
   debug[`${phase}_matchPlayerStatsLoaded`] = matchPlayerStatsMap.size;
   debug[`${phase}_segmentsErrors`] = segResults.filter(r => r.status === "rejected").length;
 
-  // Admin-recorded set forfeits, keyed league_match_id → setNumber → side.
-  // League rule: a forfeited set contributes nothing but the win/loss, so
-  // these sets are excluded from every throwing stat below and their result
-  // comes from the ruling rather than from whatever legs DC still holds.
-  const forfeitedSets = new Map<number, Map<number, string>>();
-  for (const row of await db
-    .select({ matchId: setForfeits.matchId, setNumber: setForfeits.setNumber, forfeitedBy: setForfeits.forfeitedBy })
-    .from(setForfeits)
-    .where(eq(setForfeits.seasonId, targetSeasonId))) {
-    if (!forfeitedSets.has(row.matchId)) forfeitedSets.set(row.matchId, new Map());
-    forfeitedSets.get(row.matchId)!.set(row.setNumber, row.forfeitedBy);
-  }
-  debug[`${phase}_setForfeits`] = [...forfeitedSets.values()].reduce((n, m) => n + m.size, 0);
+  // ── Forfeited sets ──────────────────────────────────────────────────────────
+  // League rule: on a game forfeit the no-show's name is lined out and no darts
+  // count, so a forfeited set contributes NOTHING to a player's stats except
+  // the win and the loss. DC nonetheless keeps leftover leg data for these
+  // sets, and it can be nonsense — one real forfeited set records a side
+  // "winning" on 102 marks against 342 — so the whole set is excluded from
+  // every throwing stat rather than trusted.
+  //
+  // Built once here, before stats are accumulated, and reused by step I.
+  // /matches/'s `is_forfeit` is the structured signal; DC's free-text
+  // "Set #N: Set Forfeited by X" notes are a fallback for the forfeits it
+  // records only as prose. Across one full season, 9 matches had a forfeit:
+  // 7 carried both signals, 1 only `is_forfeit`, 1 only a note. setNum is
+  // 1-indexed to match /games/'s set_index and DC's own "Set #N" wording;
+  // DCForfeitSet.setIndex is 0-indexed, hence the + 1.
+  interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
+  const forfeitsByGuid = new Map<string, ForfeitInfo[]>();
+  for (const [guid, meta] of matchMeta) {
+    const matchData = matchDataMap.get(guid);
+    if (!matchData) continue;
+    const nameFor = (dcTeamId: string) => {
+      const t = teamCompetitors.find((c) => String(c.id) === dcTeamId);
+      return decodeHtmlEntities(String(t?.team_name ?? t?.name ?? "")) ?? "";
+    };
+    const homeName = nameFor(meta.homeTeamId);
+    const awayName = nameFor(meta.awayTeamId);
 
-  /** Which side forfeited this set, if the league ruled one — "home" | "away" | "both". */
-  const forfeitSideFor = (guid: string, setNum: number | null | undefined): string | null => {
-    if (setNum == null) return null;
-    const mid = matchDataMap.get(guid)?.matchInfo?.league_match_id;
-    if (mid == null) return null;
-    return forfeitedSets.get(mid)?.get(setNum) ?? null;
-  };
+    const noteBySetNum = new Map<number, string>();
+    for (const note of [
+      ...(matchData.matchInfo?.notes?.sets ?? []),
+      ...(matchData.matchInfo?.notes?.games ?? []),
+    ]) {
+      if (!note || !/forfeit/i.test(note)) continue;
+      const m = note.match(/^Set #(\d+): /i);
+      if (m) noteBySetNum.set(Number(m[1]), note);
+    }
+
+    const list: ForfeitInfo[] = [];
+    for (const fs of matchData.forfeitSets) {
+      if (fs.isForfeitBoth) continue; // no single forfeiting team to credit
+      const setNum = fs.setIndex + 1;
+      const forfeitingTeam = fs.homeWin ? awayName : homeName;
+      list.push({
+        setNum, forfeitingTeam, fs,
+        message: noteBySetNum.get(setNum) ?? `Set #${setNum}: Set Forfeited by ${forfeitingTeam}`,
+      });
+    }
+    for (const [setNum, message] of noteBySetNum) {
+      if (list.some((f) => f.setNum === setNum)) continue;
+      const m = message.match(/forfeited by (.+?)\.?$/i);
+      list.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
+    }
+    if (list.length > 0) forfeitsByGuid.set(guid, list);
+  }
+  debug[`${phase}_forfeitedSets`] = [...forfeitsByGuid.values()].reduce((n, l) => n + l.length, 0);
+
+  /** True when this set was forfeited, so none of its throwing counts. */
+  const isForfeitedSet = (guid: string, setNum: number | null | undefined): boolean =>
+    setNum != null && (forfeitsByGuid.get(guid) ?? []).some((f) => f.setNum === setNum);
 
   // ── E. Build player accumulators from segments ──────────────────────────────
   const accumByName = new Map<string, PlayerAccum>();
@@ -551,12 +589,12 @@ async function scrapePhase(
     for (const legs of sets) {
       if (legs.length === 0) continue;
       const type = gameType(legs[0].game_name ?? "");
-      const forfeitSide = forfeitSideFor(guid, legs[0]?.set_index);
-      // A forfeited set's result comes from the ruling, not the legs — DC's
-      // recorded legs for one are partial or misfiled leftovers.
-      const winner = forfeitSide
-        ? (forfeitSide === "home" ? 1 : forfeitSide === "away" ? 0 : -1)
-        : setWinner(legs);
+      // A forfeited set contributes nothing here: not its throwing, and not a
+      // win or loss off legs DC may have recorded for a game nobody played.
+      // Forfeit results are credited in step I, from the player attribution
+      // /matches/ carries, which is the only trustworthy source for one.
+      const isForfeited = isForfeitedSet(guid, legs[0]?.set_index);
+      const winner = setWinner(legs);
 
       const homePlayers = new Set<string>();
       const awayPlayers = new Set<string>();
@@ -576,7 +614,7 @@ async function scrapePhase(
       for (const p of awayPlayers) matchAwayPlayers.add(p);
       // A forfeited set was never actually played, so it must not count
       // toward "this player played two sets of the same game type".
-      if (!forfeitSide) {
+      if (!isForfeited) {
         if (!gameTypeSetsByPlayer.has(type)) gameTypeSetsByPlayer.set(type, new Map());
         const typeCounts = gameTypeSetsByPlayer.get(type)!;
         for (const p of new Set([...homePlayers, ...awayPlayers])) {
@@ -611,12 +649,14 @@ async function scrapePhase(
         }
       }
 
-      awardSet(homePlayers, winner === 0, awayPlayers, awayTeamName);
-      awardSet(awayPlayers, winner === 1, homePlayers, homeTeamName);
+      if (!isForfeited) {
+        awardSet(homePlayers, winner === 0, awayPlayers, awayTeamName);
+        awardSet(awayPlayers, winner === 1, homePlayers, homeTeamName);
+      }
 
       // Everything below this point is throwing data — marks, darts, points,
       // notables, low-dart games. None of it counts for a forfeited set.
-      if (forfeitSide) continue;
+      if (isForfeited) continue;
 
       for (const leg of legs) {
         const is501Tiebreaker = type === "501" && leg.set_game_number === 3;
@@ -749,7 +789,7 @@ async function scrapePhase(
     // across a full match), so this subtracts cleanly rather than drifting.
     const voided = new Map<string, { pts01: number; darts01: number; marks: number; crktDarts: number }>();
     for (const leg of playerMatchStats.perLeg) {
-      if (!forfeitSideFor(guid, leg.set_number)) continue;
+      if (!isForfeitedSet(guid, leg.set_number)) continue;
       const key = normalizeName(leg.name);
       const v = voided.get(key) ?? { pts01: 0, darts01: 0, marks: 0, crktDarts: 0 };
       const darts = dcNum(leg.darts_thrown);
@@ -973,43 +1013,7 @@ async function scrapePhase(
     // Everything below reads across `fragmentGuids` — normally just this guid,
     // but every fragment of a split match, since set numbers continue across
     // them and so never collide.
-    // Sets the league has formally ruled a forfeit. A ruling supersedes
-    // whatever DC recorded for that set: it decides the point, its throwing
-    // data is already excluded from player stats in step E, and it must not
-    // also raise a forfeit alert — the human has already dealt with it.
-    const ruledSets = realMatchId != null ? forfeitedSets.get(realMatchId) : undefined;
-
-    interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
-    const forfeits: ForfeitInfo[] = [];
-    for (const g of fragmentGuids) {
-      const fInfo = matchDataMap.get(g)?.matchInfo;
-      const noteStrings = [...(fInfo?.notes?.sets ?? []), ...(fInfo?.notes?.games ?? [])];
-      const forfeitNotes = noteStrings.filter((n) => n && /forfeit/i.test(n));
-      const noteBySetNum = new Map<number, string>();
-      for (const note of forfeitNotes) {
-        const m = note.match(/^Set #(\d+): /i);
-        if (m) noteBySetNum.set(Number(m[1]), note);
-      }
-      for (const fs of matchDataMap.get(g)?.forfeitSets ?? []) {
-        if (fs.isForfeitBoth) continue; // no single forfeiting team to credit a point to
-        const setNum = fs.setIndex + 1;
-        const forfeitingTeam = fs.homeWin ? awayTeamNameStr : homeTeamNameStr;
-        forfeits.push({
-          setNum, forfeitingTeam, fs,
-          message: noteBySetNum.get(setNum) ?? `Set #${setNum}: Set Forfeited by ${forfeitingTeam}`,
-        });
-      }
-      for (const [setNum, message] of noteBySetNum) {
-        if (forfeits.some((f) => f.setNum === setNum)) continue;
-        const m = message.match(/forfeited by (.+?)\.?$/i);
-        forfeits.push({ setNum, forfeitingTeam: m ? m[1].trim() : "", message });
-      }
-    }
-    // Drop anything the league has already ruled on — kept out of the alert
-    // path and the DC-derived scoring above, which the ruling replaces.
-    const dcForfeits = forfeits.filter((f) => !ruledSets?.has(f.setNum));
-    forfeits.length = 0;
-    forfeits.push(...dcForfeits);
+    const forfeits: ForfeitInfo[] = fragmentGuids.flatMap((g) => forfeitsByGuid.get(g) ?? []);
 
     // Reconstruct the team score from actual per-set leg data — the same
     // thing DC's own "Match Legs" report shows — purely as a cross-check.
@@ -1022,18 +1026,11 @@ async function scrapePhase(
       for (const legs of segmentsMap.get(g) ?? []) {
         if (legs.length === 0) continue;
         const si = legs[0]?.set_index;
-        if (si != null && ruledSets?.has(si)) continue;
         if (si != null && forfeits.some((f) => f.setNum === si)) continue;
         const w = setWinner(legs);
         if (w === 0) segHomeScore++;
         else if (w === 1) segAwayScore++;
       }
-    }
-    // A league ruling decides its own set: the non-forfeiting side takes the
-    // point, and on a both-team forfeit neither side does.
-    for (const [, side] of ruledSets ?? []) {
-      if (side === "home") segAwayScore++;
-      else if (side === "away") segHomeScore++;
     }
     for (const { forfeitingTeam } of forfeits) {
       if (forfeitingTeam.toLowerCase() === homeTeamNameStr.toLowerCase()) segAwayScore++;
@@ -1388,6 +1385,24 @@ async function scrapePhase(
       .onConflictDoUpdate({ target: [playerStats.seasonId, playerStats.playerId, playerStats.phase], set: { ...vals } });
 
     if (acc) {
+      // Weeks this player now has stats for. Anything else stored against them
+      // is stale and must go: a week can legitimately empty out — every set a
+      // player threw that night being forfeited does it — and an upsert-only
+      // write would leave the old numbers sitting there forever.
+      const liveWeekKeys = new Set(acc.weekStats.keys());
+      const staleWeeks = await db
+        .select({ id: playerWeekStats.id, weekKey: playerWeekStats.weekKey })
+        .from(playerWeekStats)
+        .where(and(
+          eq(playerWeekStats.seasonId, targetSeasonId),
+          eq(playerWeekStats.playerId, playerId),
+          eq(playerWeekStats.phase, phase),
+        ));
+      const toDelete = staleWeeks.filter((r) => !liveWeekKeys.has(r.weekKey)).map((r) => r.id);
+      if (toDelete.length > 0) {
+        await db.delete(playerWeekStats).where(inArray(playerWeekStats.id, toDelete));
+      }
+
       for (const [wk, w] of acc.weekStats) {
         const weekVals = {
           phase,
