@@ -21,7 +21,7 @@ import {
   type DCGameLeg,
   type DCMatchData,
   type DCMatchInfo,
-  type DCMatchPlayerStat,
+  type DCMatchPlayerStats,
   type DCSeason,
   type DCForfeitSet,
 } from "./dartconnect";
@@ -471,7 +471,7 @@ async function scrapePhase(
   const guids = Array.from(matchMeta.keys());
   const segmentsMap = new Map<string, DCGameLeg[][]>();
   const matchDataMap = new Map<string, DCMatchData>();
-  const matchPlayerStatsMap = new Map<string, DCMatchPlayerStat[]>();
+  const matchPlayerStatsMap = new Map<string, DCMatchPlayerStats>();
 
   const segResults = await Promise.allSettled(
     guids.map(async (guid) => {
@@ -699,7 +699,7 @@ async function scrapePhase(
     const meta = matchMeta.get(guid);
     if (!meta) continue;
     const weekKey = meta.weekKey;
-    for (const ps of playerMatchStats) {
+    for (const ps of playerMatchStats.players) {
       const acc = accumByName.get(normalizeName(ps.name));
       if (!acc) continue;
       const w = acc.weekStats.get(weekKey);

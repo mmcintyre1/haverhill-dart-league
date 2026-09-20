@@ -600,9 +600,29 @@ export interface DCMatchPlayerStat {
   cricket_average: string | null; // pre-computed MPR e.g. "2.2", null if no cricket played
 }
 
-/** Fetch per-player stats from a match recap page (doubles-level breakdown).
- *  Returns the `players` array from the Inertia props of recap.dartconnect.com/players/{guid}. */
-export async function fetchMatchPlayerStats(matchGuid: string): Promise<DCMatchPlayerStat[]> {
+/** One player's throwing in ONE LEG, from the same recap page's
+ *  `playersPerGame` prop. Verified against a real match: summing these per
+ *  player reproduces the match aggregates in `players` exactly, for all 13
+ *  players and all four totals. That exactness is what lets a forfeited set's
+ *  contribution be subtracted back out without the numbers drifting. */
+export interface DCPlayerLegStat {
+  name: string;
+  set_number: number;   // 1-indexed, same numbering as /games/ set_index
+  game_name: string;    // "601 DIDO" | "501 SIDO" | "Cricket"
+  darts_thrown: number | string | null;
+  points_scored: number | string | null;  // 01 games
+  marks_scored: number | string | null;   // cricket
+}
+
+export interface DCMatchPlayerStats {
+  players: DCMatchPlayerStat[];
+  /** Flattened per-leg breakdown. Empty if DC didn't send `playersPerGame`. */
+  perLeg: DCPlayerLegStat[];
+}
+
+/** Fetch per-player stats from a match recap page (doubles-level breakdown),
+ *  plus the per-leg breakdown those totals are built from. */
+export async function fetchMatchPlayerStats(matchGuid: string): Promise<DCMatchPlayerStats> {
   const url = `https://recap.dartconnect.com/players/${matchGuid}`;
   const res = await fetch(url, {
     headers: {
@@ -619,7 +639,16 @@ export async function fetchMatchPlayerStats(matchGuid: string): Promise<DCMatchP
 
   const json = JSON.parse(m[1].replace(/&quot;/g, '"'));
   const props = json.props as Record<string, unknown>;
-  return (props.players ?? []) as DCMatchPlayerStat[];
+  // playersPerGame nests as [set][side][player]; flatten to a plain leg list.
+  // A multi-leg set appears once per leg, which is exactly what we want.
+  const perLegRaw = Array.isArray(props.playersPerGame)
+    ? (props.playersPerGame as unknown[]).flat(2)
+    : [];
+  return {
+    players: (props.players ?? []) as DCMatchPlayerStat[],
+    perLeg: perLegRaw.filter((e): e is DCPlayerLegStat =>
+      !!e && typeof e === "object" && typeof (e as DCPlayerLegStat).name === "string"),
+  };
 }
 
 export interface DCLeaderboardStat {
