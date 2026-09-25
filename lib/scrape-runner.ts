@@ -507,7 +507,10 @@ async function scrapePhase(
   // 7 carried both signals, 1 only `is_forfeit`, 1 only a note. setNum is
   // 1-indexed to match /games/'s set_index and DC's own "Set #N" wording;
   // DCForfeitSet.setIndex is 0-indexed, hence the + 1.
-  interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string }
+  // isNull = a joint forfeit, where both teams invalidated themselves. Nobody
+  // wins it and nobody loses it; the set is wiped. An ordinary forfeit has a
+  // winner and effectively no loser, since there's no player to pin a loss on.
+  interface ForfeitInfo { setNum: number; forfeitingTeam: string; fs?: DCForfeitSet; message: string; isNull?: boolean }
   const forfeitsByGuid = new Map<string, ForfeitInfo[]>();
   for (const [guid, meta] of matchMeta) {
     const matchData = matchDataMap.get(guid);
@@ -531,8 +534,17 @@ async function scrapePhase(
 
     const list: ForfeitInfo[] = [];
     for (const fs of matchData.forfeitSets) {
-      if (fs.isForfeitBoth) continue; // no single forfeiting team to credit
       const setNum = fs.setIndex + 1;
+      if (fs.isForfeitBoth) {
+        // Both sides forfeited: still a forfeited set, so none of its throwing
+        // counts — it just has no winner to credit. Skipping it outright (as
+        // this did before) let a nulled game's marks and notables through.
+        list.push({
+          setNum, forfeitingTeam: "", fs, isNull: true,
+          message: noteBySetNum.get(setNum) ?? `Set #${setNum}: forfeited by both teams`,
+        });
+        continue;
+      }
       const forfeitingTeam = fs.homeWin ? awayName : homeName;
       list.push({
         setNum, forfeitingTeam, fs,
@@ -1127,7 +1139,10 @@ async function scrapePhase(
     // that's the case DC's UI won't let you fix after the match locks, so
     // a manual player-stat correction is the only way to reflect it.
     // (forfeits computed earlier, alongside score derivation.)
-    for (const { fs, message } of forfeits) {
+    for (const { fs, message, isNull } of forfeits) {
+      // A joint forfeit DC recorded properly is already complete: nobody is
+      // credited, nothing counts, and there's nothing for an admin to fix.
+      if (isNull) continue;
       // "-SHORT-" is DC's placeholder for an unfilled roster slot, not a person.
       const winningPlayers = fs
         ? (fs.homeWin ? fs.homePlayers : fs.awayWin ? fs.awayPlayers : [])
