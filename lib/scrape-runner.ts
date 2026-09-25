@@ -560,6 +560,35 @@ async function scrapePhase(
   }
   debug[`${phase}_forfeitedSets`] = [...forfeitsByGuid.values()].reduce((n, l) => n + l.length, 0);
 
+  // ── Name drift ──────────────────────────────────────────────────────────────
+  // /games/ turn data carries only a player's NAME, and DC's spelling there
+  // drifts from the roster's: "Fran` Donoghue" for "Fran Donoghue", "Steve
+  // Sirios" for "Steve Sirois", "Aracyles Dejesus" for "Aracelys Dejesus".
+  // Every one of those silently dropped that player's whole night, because the
+  // accumulator lookup simply missed. /matches/ attributes the same labels to
+  // sets WITH the DC player id, so a drifted name can be resolved to the right
+  // player. Four players over ten match appearances were affected this season.
+  const labelToDcIdByGuid = new Map<string, Map<string, string>>();
+  for (const [guid, matchData] of matchDataMap) {
+    const labelToDcId = new Map<string, string>();
+    const labelsByDcId = new Map<string, Set<string>>();
+    for (const { label, dcId } of matchData.playerIds) {
+      if (!dcId) continue;
+      const name = normalizeName(label);
+      if (!name || name === "-SHORT-") continue;
+      labelToDcId.set(name, dcId);
+      if (!labelsByDcId.has(dcId)) labelsByDcId.set(dcId, new Set());
+      labelsByDcId.get(dcId)!.add(name);
+    }
+    // Drop any id DC stamped on more than one player in the same match. Seen
+    // for real: one guid on both Chuck Stanley and Shannon Barhanys. Trusting
+    // it would merge two players' stats, which is worse than the drift.
+    for (const [dcId, names] of labelsByDcId) {
+      if (names.size > 1) for (const n of names) labelToDcId.delete(n);
+    }
+    if (labelToDcId.size > 0) labelToDcIdByGuid.set(guid, labelToDcId);
+  }
+
   /** True when this set was forfeited, so none of its throwing counts. */
   const isForfeitedSet = (guid: string, setNum: number | null | undefined): boolean =>
     setNum != null && (forfeitsByGuid.get(guid) ?? []).some((f) => f.setNum === setNum);
@@ -584,6 +613,20 @@ async function scrapePhase(
     }
     if (dcId) accumByDcId.set(dcId, accumByName.get(playerName)!);
   }
+
+  /** Map a name as DC wrote it in this match onto the rostered player's name.
+   *  Rostered spelling wins when it matches, since that is already id-derived;
+   *  otherwise fall back to the per-set DC id, which is what rescues a drifted
+   *  name. Returns the input unchanged when neither resolves, so genuinely
+   *  unknown names still behave as before. */
+  const canonicalName = (guid: string, rawName: string | null | undefined): string => {
+    const n = normalizeName(String(rawName ?? ""));
+    if (!n || accumByName.has(n)) return n;
+    const dcId = labelToDcIdByGuid.get(guid)?.get(n);
+    const acc = dcId ? accumByDcId.get(dcId) : undefined;
+    if (acc) debug[`${phase}_nameDriftResolved`] = (Number(debug[`${phase}_nameDriftResolved`]) || 0) + 1;
+    return acc ? acc.name : n;
+  };
 
   for (const [guid, sets] of segmentsMap) {
     const meta = matchMeta.get(guid);
@@ -618,8 +661,10 @@ async function scrapePhase(
           // time a different real player is the one actually missing), so
           // it must never be treated as a real person for lineup-mistake
           // checks (playing both sides, repeating a game type) below.
-          if (turn.home?.name && normalizeName(turn.home.name) !== "-SHORT-") homePlayers.add(normalizeName(turn.home.name));
-          if (turn.away?.name && normalizeName(turn.away.name) !== "-SHORT-") awayPlayers.add(normalizeName(turn.away.name));
+          const hn = canonicalName(guid, turn.home?.name);
+          const an = canonicalName(guid, turn.away?.name);
+          if (hn && hn !== "-SHORT-") homePlayers.add(hn);
+          if (an && an !== "-SHORT-") awayPlayers.add(an);
         }
       }
       for (const p of homePlayers) matchHomePlayers.add(p);
@@ -678,7 +723,7 @@ async function scrapePhase(
           for (const side of ["home", "away"] as const) {
             const t = turn[side];
             if (!t?.name) continue;
-            const acc = accumByName.get(normalizeName(t.name));
+            const acc = accumByName.get(canonicalName(guid, t.name));
             if (!acc) continue;
             const is01   = type === "601" || type === "501";
             const isCrkt = type === "crkt";
@@ -802,7 +847,7 @@ async function scrapePhase(
     const voided = new Map<string, { pts01: number; darts01: number; marks: number; crktDarts: number }>();
     for (const leg of playerMatchStats.perLeg) {
       if (!isForfeitedSet(guid, leg.set_number)) continue;
-      const key = normalizeName(leg.name);
+      const key = canonicalName(guid, leg.name);
       const v = voided.get(key) ?? { pts01: 0, darts01: 0, marks: 0, crktDarts: 0 };
       const darts = dcNum(leg.darts_thrown);
       if (/cricket/i.test(leg.game_name ?? "")) {
@@ -816,7 +861,7 @@ async function scrapePhase(
     }
 
     for (const ps of playerMatchStats.players) {
-      const nameKey = normalizeName(ps.name);
+      const nameKey = canonicalName(guid, ps.name);
       const acc = accumByName.get(nameKey);
       if (!acc) continue;
       const v = voided.get(nameKey);

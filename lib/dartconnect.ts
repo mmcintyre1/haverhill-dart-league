@@ -474,6 +474,34 @@ function parseSetIndexes(segments: Record<string, unknown[]> | unknown[] | undef
   return [...out].sort((a, b) => a - b);
 }
 
+/** Every (player_label, player_guid) pair this recap attributes to a set, across
+ *  all sets — not just forfeited ones. This is the bridge for stat accumulation:
+ *  /games/ turn data carries only a player's NAME, and DC's spelling there drifts
+ *  from the roster's ("Fran` Donoghue" for "Fran Donoghue", "Steve Sirios" for
+ *  "Steve Sirois"), which silently dropped those players' stats. The labels here
+ *  match the turn names exactly and carry the id, so a drifted name can be
+ *  resolved back to the right player. */
+function parsePlayerIds(segments: Record<string, unknown[]> | unknown[] | undefined): DCForfeitPlayer[] {
+  if (!segments || Array.isArray(segments)) return [];
+  const flat = (Object.values(segments) as unknown[][]).flat(1);
+  const seen = new Map<string, DCForfeitPlayer>();
+  for (const set of flat) {
+    if (!Array.isArray(set) || set.length === 0) continue;
+    const entry = set[0] as Record<string, unknown>;
+    for (const side of ["home", "away"] as const) {
+      const s = entry[side] as Record<string, unknown> | undefined;
+      if (!Array.isArray(s?.players)) continue;
+      for (const p of s!.players as Array<{ player_label?: string; player_guid?: number | string | null }>) {
+        const label = p.player_label ?? "";
+        const dcId = p.player_guid != null ? String(p.player_guid) : null;
+        if (!label || !dcId) continue;
+        seen.set(`${label} ${dcId}`, { label, dcId });
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
 /** Extended return from fetchMatchData — includes the authoritative score and
  *  any round/scheduling metadata discoverable from the recap page props. */
 export interface DCMatchData {
@@ -482,6 +510,7 @@ export interface DCMatchData {
   schedDate: string | null;  // ISO "YYYY-MM-DD" if present in props
   forfeitSets: DCForfeitSet[];
   setIndexes: number[];      // 1-indexed set numbers present in this recap
+  playerIds: DCForfeitPlayer[]; // label -> DC player id, across every set
   propKeys: string[];        // top-level prop keys — for investigating new fields
 }
 
@@ -550,6 +579,7 @@ export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
   const segmentsProp = props.segments as Record<string, unknown[]> | unknown[] | undefined;
   const forfeitSets = parseForfeitSets(segmentsProp);
   const setIndexes = parseSetIndexes(segmentsProp);
+  const playerIds = parsePlayerIds(segmentsProp);
 
   return {
     matchInfo,
@@ -557,6 +587,7 @@ export async function fetchMatchData(matchGuid: string): Promise<DCMatchData> {
     schedDate,
     forfeitSets,
     setIndexes,
+    playerIds,
     propKeys: Object.keys(props),
   };
 }
