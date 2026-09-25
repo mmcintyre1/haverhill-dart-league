@@ -619,13 +619,24 @@ async function scrapePhase(
    *  otherwise fall back to the per-set DC id, which is what rescues a drifted
    *  name. Returns the input unchanged when neither resolves, so genuinely
    *  unknown names still behave as before. */
+  const unresolvedNames = new Map<string, Set<string>>();
   const canonicalName = (guid: string, rawName: string | null | undefined): string => {
     const n = normalizeName(String(rawName ?? ""));
     if (!n || accumByName.has(n)) return n;
     const dcId = labelToDcIdByGuid.get(guid)?.get(n);
     const acc = dcId ? accumByDcId.get(dcId) : undefined;
-    if (acc) debug[`${phase}_nameDriftResolved`] = (Number(debug[`${phase}_nameDriftResolved`]) || 0) + 1;
-    return acc ? acc.name : n;
+    if (acc) {
+      debug[`${phase}_nameDriftResolved`] = (Number(debug[`${phase}_nameDriftResolved`]) || 0) + 1;
+      return acc.name;
+    }
+    // Neither the roster nor a DC id knows this name, so every stat for it is
+    // about to be dropped. That used to happen in silence — it's how two
+    // players went a whole season with no record at all. Flag it instead.
+    if (n !== "-SHORT-") {
+      if (!unresolvedNames.has(guid)) unresolvedNames.set(guid, new Set());
+      unresolvedNames.get(guid)!.add(n);
+    }
+    return n;
   };
 
   for (const [guid, sets] of segmentsMap) {
@@ -826,6 +837,19 @@ async function scrapePhase(
       );
     } else {
       await autoResolveAlert(targetSeasonId, alertMatchId, "player_repeat_game_type");
+    }
+
+    const unknown = [...(unresolvedNames.get(guid) ?? [])];
+    if (unknown.length > 0) {
+      await raiseAlert(
+        targetSeasonId, alertMatchId, "unknown_player",
+        `${homeTeamName} vs ${awayTeamName}: ${unknown.join(", ")} ${unknown.length === 1 ? "doesn't match" : "don't match"} ` +
+        `any player on the season roster, and DartConnect attached no player id to the set either — so every stat from ` +
+        `this match for ${unknown.length === 1 ? "them" : "them"} has been dropped. Usually a spelling difference in DC; check the match's lineup.`,
+        guid
+      );
+    } else {
+      await autoResolveAlert(targetSeasonId, alertMatchId, "unknown_player");
     }
   }
 
