@@ -1280,7 +1280,13 @@ async function scrapePhase(
     // For REG: update scores on lineup-sourced rows (scores only — dcGuid is set
     // below to avoid unique-constraint conflicts when the same two teams appear
     // in both REG and POST, giving two rows with the same team pair).
-    if (phase === "REG") {
+    //
+    // Scoped to the scheduled date as well as the team pair. Without that, one
+    // fixture's score was written to EVERY row those two teams share in the
+    // season — a regular-season result onto its own playoff rematch, and (seen
+    // for real) a completed result onto a stale duplicate of the same fixture,
+    // which is what made one match show up twice with identical scores.
+    if (phase === "REG" && parsedDate) {
       await db
         .update(matches)
         .set({ homeScore, awayScore, ...(roundSeq != null ? { roundSeq } : {}), status: "C", updatedAt: new Date() })
@@ -1288,6 +1294,7 @@ async function scrapePhase(
           eq(matches.seasonId, targetSeasonId),
           eq(matches.homeTeamId, homeSerialId),
           eq(matches.awayTeamId, awaySerialId),
+          eq(matches.schedDate, parsedDate),
         ));
     }
 
@@ -1343,6 +1350,84 @@ async function scrapePhase(
     matchScoresUpdated++;
   }
   debug[`${phase}_matchScoresUpdated`] = matchScoresUpdated;
+
+  // ── I2. Collapse duplicate fixtures ─────────────────────────────────────────
+  // DartConnect can carry the same scheduled fixture twice, under two different
+  // league_match_ids. Seen for real: a match exited and restarted left the
+  // original record behind at 1-2 while the replay became a new record at 7-4,
+  // and DC's schedule still lists both as complete. Both arrive through the
+  // lineups feed, so we faithfully store two rows — and the standings then
+  // count the fixture twice, handing one team an extra win and seven points.
+  //
+  // A real match has a recap. When one row for a fixture has a guid and its
+  // twins don't, those twins are schedule ghosts and go. If several have guids
+  // that's a different animal — two genuine recaps — which splitMerges handles
+  // when they share an id, and which is flagged rather than guessed at when
+  // they don't. If none have guids they're just pending; leave them be.
+  const fixtureRows = await db
+    .select({
+      id: matches.id, dcGuid: matches.dcGuid, schedDate: matches.schedDate,
+      homeTeamId: matches.homeTeamId, awayTeamId: matches.awayTeamId,
+      homeTeamName: matches.homeTeamName, awayTeamName: matches.awayTeamName,
+    })
+    .from(matches)
+    .where(and(eq(matches.seasonId, targetSeasonId), eq(matches.seasonStatus, phase)));
+
+  const byFixture = new Map<string, typeof fixtureRows>();
+  for (const row of fixtureRows) {
+    if (row.homeTeamId == null || row.awayTeamId == null || !row.schedDate) continue;
+    const key = `${row.schedDate}|${row.homeTeamId}|${row.awayTeamId}`;
+    if (!byFixture.has(key)) byFixture.set(key, []);
+    byFixture.get(key)!.push(row);
+  }
+
+  const ghostIds: number[] = [];
+  for (const rows of byFixture.values()) {
+    if (rows.length < 2) continue;
+    const withGuid = rows.filter((r) => r.dcGuid);
+    if (withGuid.length !== 1) {
+      if (withGuid.length > 1) {
+        const r = withGuid[0];
+        await raiseAlert(
+          targetSeasonId, r.id, "duplicate_fixture",
+          `${r.homeTeamName} vs ${r.awayTeamName} on ${r.schedDate}: DartConnect has ${withGuid.length} separate match records ` +
+          `for this one fixture, each with its own recap. The site is counting it more than once. Check which is the real result.`,
+          withGuid[0].dcGuid, withGuid[1].dcGuid
+        );
+      }
+      continue;
+    }
+    for (const r of rows) if (!r.dcGuid) ghostIds.push(r.id);
+  }
+
+  if (ghostIds.length > 0) {
+    // Never delete a row something else points at. admin_alerts.matchId and
+    // player_stat_adjustments.matchId are both foreign keys, so deleting a
+    // referenced row would throw and take the whole scrape down with it — and
+    // a correction recorded against a match is exactly the kind of thing that
+    // would be pointing here. Those rows are reported instead of removed.
+    const referenced = new Set<number>();
+    for (const r of await db.select({ id: adminAlerts.matchId }).from(adminAlerts).where(inArray(adminAlerts.matchId, ghostIds))) {
+      if (r.id != null) referenced.add(r.id);
+    }
+    for (const r of await db.select({ id: playerStatAdjustments.matchId }).from(playerStatAdjustments).where(inArray(playerStatAdjustments.matchId, ghostIds))) {
+      if (r.id != null) referenced.add(r.id);
+    }
+    const deletable = ghostIds.filter((id) => !referenced.has(id));
+    if (deletable.length > 0) {
+      await db.delete(matches).where(inArray(matches.id, deletable));
+      debug[`${phase}_ghostFixturesRemoved`] = deletable.length;
+    }
+    for (const id of referenced) {
+      const row = fixtureRows.find((r) => r.id === id);
+      await raiseAlert(
+        targetSeasonId, id, "duplicate_fixture",
+        `${row?.homeTeamName} vs ${row?.awayTeamName} on ${row?.schedDate}: this looks like a stale duplicate of the same ` +
+        `fixture — DartConnect has a second record for it that carries the recap — but an alert or a correction is attached ` +
+        `to this one, so it hasn't been removed automatically. Move or delete those, then re-run Data Refresh.`
+      );
+    }
+  }
 
   // ── K. Upsert player stats + per-week stats ──────────────────────────────────
   let playersUpdated = 0;

@@ -1281,6 +1281,7 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   score_mismatch: "Score doesn't add up",
   team_history_fetch_failed: "Team data not refreshed",
   unknown_player: "Player not on roster",
+  duplicate_fixture: "Fixture counted twice",
 };
 
 const GAME_TYPE_LABELS: Record<string, string> = { crkt: "Cricket", "601": "601", "501": "501" };
